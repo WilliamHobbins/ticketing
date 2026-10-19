@@ -1,0 +1,10 @@
+apiVersion: 1
+providers:
+  - name: "Ticketing"
+    orgId: 1
+    folder: "Sistema de Tickets"
+    type: file
+    disableDeletion: true
+    editable: true
+    options:
+      path: /var/lib/grafana/dashboards

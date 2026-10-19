@@ -1,0 +1,21 @@
+global:
+  scrape_interval: 15s
+  evaluation_interval: 15s
+
+scrape_configs:
+  - job_name: "users-service"
+    metrics_path: /metrics
+    static_configs:
+      - targets: ["users-service:3001"]
+
+  - job_name: "nginx"
+    static_configs:
+      - targets: ["nginx-exporter:9113"]
+
+  # Descomentar a medida que cada servicio exponga GET /metrics (puerto interno de cada uno):
+  # - job_name: "catalog-service"
+  #   static_configs: [{ targets: ["catalog-service:PUERTO"] }]
+  # - job_name: "inventory-service"
+  #   static_configs: [{ targets: ["inventory-service:PUERTO"] }]
+  # - job_name: "orders-service"
+  #   static_configs: [{ targets: ["orders-service:PUERTO"] }]
