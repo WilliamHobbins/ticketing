@@ -67,7 +67,7 @@ El esquema se carga con `inventory-service/db/schema.sql`.
 ## Configuración (variables de entorno)
 | Variable | Descripción | Valor de ejemplo |
 |---|---|---|
-| PORT | Puerto en el que escucha el servicio | 3003 |
+| PORT | Puerto en el que escucha el servicio | 8083 |
 | DATABASE_URL | Conexión a Postgres | postgres://inventory:inventory@localhost:5432/inventory |
 | REDIS_URL | Conexión a Redis | redis://localhost:6379 |
 
@@ -79,7 +79,7 @@ cd inventory-service
 npm install
 copy .env.example .env      # en Windows
 npm run dev
-curl.exe http://localhost:3003/health
+curl.exe http://localhost:8083/health
 ```
 Respuesta esperada: `{"status":"ok","service":"inventory-service"}`.
 
@@ -101,7 +101,7 @@ El servicio se empaqueta con un Dockerfile de dos etapas (compilación y ejecuci
 a partir de `node:22-alpine`. Se construye y corre con:
 
 docker build -t inventory-service .
-docker run --rm -p 3003:3003 --env-file .env inventory-service
+docker run --rm -p 8083:8083 --env-file .env inventory-service
 
 El `.env` no se incluye en la imagen (`.dockerignore`); la configuración se inyecta al
 iniciar el contenedor.
@@ -130,7 +130,7 @@ tests se usa un valor de pocos segundos para ver la expiración sin esperar.
 
 ### Probar a mano
 ```
-curl.exe -X POST http://localhost:3003/api/v1/holds -H "Content-Type: application/json" -d "{\"eventId\":\"evento-1\",\"seatId\":\"A1\"}"
+curl.exe -X POST http://localhost:8083/api/v1/holds -H "Content-Type: application/json" -d "{\"eventId\":\"evento-1\",\"seatId\":\"A1\"}"
 ```
 La primera vez responde 201 con `holdId` y `expiresAt`. Repetirlo sobre el mismo asiento
 responde 409. `docker exec -it inventory-redis redis-cli TTL hold:evento-1:A1` muestra el
