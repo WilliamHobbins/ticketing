@@ -9,7 +9,7 @@ app.get("/health", (_req, res) => {
   res.json({ status: "ok", service: "inventory-service" });
 });
 
-const port = Number(process.env.PORT ?? 3003);
+const port = Number(process.env.PORT ?? 8083);
 
 const server = app.listen(port, () => {
   console.log(

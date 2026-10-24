@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { redis } from "./redis";
 
-const HOLD_TTL_SECONDS = Number(process.env.HOLD_TTL_SECONDS ?? 300);
+const HOLD_TTL_SECONDS = Number(process.env.HOLD_TTL_SECONDS ?? 600);
 
 const seatKey = (eventId: string, seatId: string) => `hold:${eventId}:${seatId}`;
 const holdKey = (holdId: string) => `holdid:${holdId}`;
