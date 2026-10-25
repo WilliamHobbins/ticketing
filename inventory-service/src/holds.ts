@@ -2,6 +2,9 @@ import { randomUUID } from "node:crypto";
 import { config } from "./config";
 import { ApiError } from "./errors";
 import { redis } from "./redis";
+import { pool } from "./db";
+
+
 
 // Claves en Redis:
 //   seat:{eventId}:{seatId} -> holdId, con TTL exacto (esto es lo que "bloquea" el asiento)
@@ -11,7 +14,7 @@ import { redis } from "./redis";
 const GRACE_SECONDS = 3600;
 const EXPIRY_INDEX = "holds:expiry";
 const holdKey = (holdId: string) => `hold:${holdId}`;
-const seatKey = (eventId: string, seatId: string) => `seat:${eventId}:${seatId}`;
+export const seatKey = (eventId: string, seatId: string) => `seat:${eventId}:${seatId}`;
 
 // Los scripts Lua corren de forma atómica en Redis: nadie se mete a mitad.
 // Eso nos da el "todo o nada" para varios asientos con la misma garantía de SET NX EX.
@@ -79,9 +82,31 @@ interface StoredHold {
   expiresAtMs: number;
 }
 
-// TODO(3c): calcular el total sumando el precio de cada asiento en Postgres.
-async function computeTotal(_eventId: string, _seatIds: string[]): Promise<number> {
-  return 0;
+// Consulta Postgres: los asientos tienen que existir y no estar vendidos.
+// Devuelve el total (suma de los precios).
+async function checkSeatsAndPrice(eventId: string, seatIds: string[]): Promise<number> {
+  const { rows } = await pool.query(
+    "SELECT seat_id, price, status FROM seats WHERE event_id = $1 AND seat_id = ANY($2::text[])",
+    [eventId, seatIds],
+  );
+
+  const found = new Set(rows.map((r) => r.seat_id as string));
+  const missing = seatIds.filter((s) => !found.has(s));
+  if (missing.length > 0) {
+    throw new ApiError(404, "SEAT_NOT_FOUND", "Uno o más asientos no existen en este evento", {
+      seatIds: missing,
+    });
+  }
+
+  const sold = rows.filter((r) => r.status === "SOLD").map((r) => r.seat_id as string);
+  if (sold.length > 0) {
+    throw new ApiError(409, "SEAT_UNAVAILABLE", "Uno o más asientos no están disponibles", {
+      seatIds: sold,
+    });
+  }
+
+  const total = rows.reduce((sum, r) => sum + Number(r.price), 0);
+  return Math.round(total * 100) / 100; // evita restos de decimales (0.1 + 0.2)
 }
 
 async function loadHold(holdId: string): Promise<StoredHold | null> {
@@ -104,7 +129,7 @@ function holdExpired(): ApiError {
 export async function createHold(userId: string, eventId: string, seatIds: string[]) {
   const holdId = randomUUID();
   const expiresAtMs = Date.now() + config.holdTtlSeconds * 1000;
-  const total = await computeTotal(eventId, seatIds);
+  const total = await checkSeatsAndPrice(eventId, seatIds);
 
   const keys = [holdKey(holdId), EXPIRY_INDEX, ...seatIds.map((s) => seatKey(eventId, s))];
   const conflicts = (await redis.eval(

@@ -2,7 +2,7 @@ import { randomUUID } from "node:crypto";
 import express, { NextFunction, Request, Response } from "express";
 import { config } from "./config";
 import { ApiError } from "./errors";
-import { holdsRouter } from "./routes";
+import { eventsRouter, holdsRouter } from "./routes";
 import { pool } from "./db";
 import { redis } from "./redis";
 import { startConsumer } from "./consumer";
@@ -43,6 +43,7 @@ app.get("/health", async (_req, res) => {
 });
 
 app.use("/api/v1/holds", holdsRouter);
+app.use("/api/v1/events", eventsRouter);
 
 app.use((_req, res) => {
   res.status(404).json({ error: { code: "NOT_FOUND", message: "Ruta inexistente" } });

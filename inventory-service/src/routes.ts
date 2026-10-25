@@ -1,6 +1,7 @@
 import { Request, Router } from "express";
 import { ApiError } from "./errors";
 import { createHold, extendHold, getHold, releaseHold } from "./holds";
+import { listSeats } from "./seats";
 
 export const holdsRouter = Router();
 
@@ -54,4 +55,12 @@ holdsRouter.delete("/:holdId", async (req, res) => {
 
 holdsRouter.post("/:holdId/extend", async (req, res) => {
   res.json(await extendHold(holdIdParam(req)));
+});
+
+export const eventsRouter = Router();
+
+eventsRouter.get("/:eventId/seats", async (req, res) => {
+  const eventId = String(req.params.eventId);
+  if (!ID_PATTERN.test(eventId)) throw invalid("eventId inválido");
+  res.json(await listSeats(eventId));
 });
