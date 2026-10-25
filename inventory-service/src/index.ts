@@ -5,6 +5,7 @@ import { ApiError } from "./errors";
 import { holdsRouter } from "./routes";
 import { pool } from "./db";
 import { redis } from "./redis";
+import { startConsumer } from "./consumer";
 
 const app = express();
 
@@ -68,4 +69,5 @@ app.use((err: any, _req: Request, res: Response, _next: NextFunction) => {
 
 app.listen(config.port, () => {
   console.log(`inventory-service listening on port ${config.port}`);
+  void startConsumer();
 });
