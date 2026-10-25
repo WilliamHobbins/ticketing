@@ -146,3 +146,51 @@ reservarse.
 - Expiración y publicación de `hold.expired` en RabbitMQ.
 - Pasar de hold a vendido al llegar `payment.succeeded`.
 - Tests de concurrencia, métricas (`GET /metrics`) y el campo `correlationId` en los logs.
+
+## Holds con Redis (mejorado)
+
+### Qué se implementó
+Reserva temporal de asientos (hold) sobre Redis. Un hold bloquea uno o más asientos de un evento durante un tiempo limitado (`HOLD_TTL_SECONDS`, 600 s por defecto). Si el pago no llega a tiempo, los asientos vuelven a estar disponibles.
+
+| Método y ruta | Qué hace | Respuestas |
+|---|---|---|
+| `POST /api/v1/holds` `{ eventId, seatIds[] }` | Crea el hold. Es todo o nada | `201 { holdId, eventId, seatIds, expiresAt }`, `409 SEAT_UNAVAILABLE`, `400`, `401` |
+| `GET /api/v1/holds/{holdId}` | Consulta el hold | `200` con `status: "ACTIVE"`, `410 HOLD_EXPIRED` |
+| `DELETE /api/v1/holds/{holdId}` | Libera el hold (idempotente) | `204`, `403 FORBIDDEN` si es de otro usuario |
+| `POST /api/v1/holds/{holdId}/extend` | Extiende el hold | `200` con el nuevo `expiresAt`, `410 HOLD_EXPIRED` |
+
+El usuario llega en el header `X-User-Id` (lo reenvía el gateway tras validar el JWT). Si falta, el servicio responde `401`.
+
+### Qué guarda Redis
+| Clave | Valor | Para qué |
+|---|---|---|
+| `seat:{eventId}:{seatId}` | `holdId`, con TTL exacto del hold | Bloquea el asiento. Se crea con SET NX EX |
+| `hold:{holdId}` | Hash: `userId`, `eventId`, `seatIds` (JSON), `total`, `expiresAt` (ms) | Datos del hold. Vive 1 h más que el hold (GRACE) para que el barrido del paso 4 pueda publicar `hold.expired` |
+| `holds:expiry` | Sorted set, score = vencimiento en ms | Lo usará el barrido de expiración (paso 4) |
+
+### Cómo se garantiza "todo o nada"
+La creación del hold corre como un script Lua dentro de Redis. Redis ejecuta cada script de forma atómica, así que si dos pedidos compiten por el mismo asiento, uno solo lo toma. Si algún asiento de la lista está ocupado, no se toma ninguno y se devuelve `409 SEAT_UNAVAILABLE` con los asientos en conflicto.
+
+### Manejo de errores y cabeceras
+- Formato uniforme: `{ "error": { "code": "...", "message": "..." } }`. Códigos usados: `INVALID_JSON` (400), `SEAT_UNAVAILABLE` (409), `HOLD_EXPIRED` (410), `FORBIDDEN` (403), 401, 404 y 500.
+- `X-Correlation-Id` se propaga (si no llega, se genera).
+- El body se valida antes de tocar Redis.
+
+### Decisiones tomadas
+- **`extend`**: nuevo vencimiento = `max(vencimiento actual, ahora + HOLD_EXTEND_SECONDS)` con `HOLD_EXTEND_SECONDS = [confirmar]`. Se usa el máximo para que extender nunca acorte un hold y para que llamarlo varias veces no acumule tiempo. La decisión original decía "desde ahora" literal; el máximo es un ajuste a confirmar con el grupo.
+- **`DELETE`** exige que `X-User-Id` coincida con el dueño del hold (si no, 403). Si orders necesita liberar holds ajenos, hay que revisarlo.
+- **Asientos en conflicto del 409**: van en `error.details.seatIds`. El contrato no dice dónde; hay que confirmarlo con el grupo.
+- **`total`** vale 0 hasta el paso 3c (se calcula con los precios de Postgres).
+- **Base de datos**: `ticketing_inventory` (el contrato decía `inventory_db`).
+- **`JWT_SECRET`** no va en inventory: el gateway valida el JWT y reenvía `X-User-Id`.
+
+### Problema encontrado (pendiente de cerrar)
+Probando con `HOLD_TTL_SECONDS=30`, `expiresAt` salió a +90 s pero el TTL real en Redis fue 120 s. Hipótesis: el reloj del contenedor de Redis (VM de Docker Desktop) va unos 30 s atrás del host, y `extend` usaba `PEXPIREAT` con un timestamp absoluto del host. Solución propuesta: usar `PEXPIRE` con TTL relativo. Estado: [pendiente de verificar / resuelto: completar].
+
+### Cómo probarlo a mano (PowerShell)
+```powershell
+'{"eventId":"evt-1","seatIds":["A3-12"]}' | Set-Content -Encoding ascii body.json
+curl.exe -X POST http://localhost:8083/api/v1/holds -H "Content-Type: application/json" -H "X-User-Id: user-1" -d "@body.json"
+```
+Repetir el mismo POST con otro `X-User-Id` tiene que dar `409 SEAT_UNAVAILABLE`.
+

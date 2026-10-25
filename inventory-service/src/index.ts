@@ -3,6 +3,8 @@ import express, { NextFunction, Request, Response } from "express";
 import { config } from "./config";
 import { ApiError } from "./errors";
 import { holdsRouter } from "./routes";
+import { pool } from "./db";
+import { redis } from "./redis";
 
 const app = express();
 
@@ -16,9 +18,27 @@ app.use((req: Request, res: Response, next: NextFunction) => {
 
 app.use(express.json());
 
-// Sin prefijo (paso 7 agrega /metrics)
-app.get("/health", (_req, res) => {
-  res.json({ status: "ok" });
+// Si la dependencia no responde en 2 s, la damos por caída.
+function withTimeout<T>(promise: Promise<T>, ms = 2000): Promise<T> {
+  return Promise.race([
+    promise,
+    new Promise<never>((_, reject) => setTimeout(() => reject(new Error("timeout")), ms)),
+  ]);
+}
+
+app.get("/health", async (_req, res) => {
+  const [pg, rd] = await Promise.allSettled([
+    withTimeout(pool.query("SELECT 1")),
+    withTimeout(redis.ping()),
+  ]);
+  const postgres = pg.status === "fulfilled" ? "ok" : "down";
+  const redisStatus = rd.status === "fulfilled" ? "ok" : "down";
+  const healthy = postgres === "ok" && redisStatus === "ok";
+  res.status(healthy ? 200 : 503).json({
+    status: healthy ? "ok" : "degraded",
+    postgres,
+    redis: redisStatus,
+  });
 });
 
 app.use("/api/v1/holds", holdsRouter);
