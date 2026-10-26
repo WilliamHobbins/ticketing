@@ -1,9 +1,10 @@
 import express from 'express';
 import { checkDb } from './db';
 import { errorHandler, notFoundHandler } from './errors';
-import { correlation, requestObserver } from './middleware';
+import { correlation, requestObserver, requireUser } from './middleware';
 import { isBrokerConnected } from './messaging';
 import { register } from './metrics';
+import { ordersRouter } from './routes';
 
 export function createApp() {
   const app = express();
@@ -30,7 +31,7 @@ export function createApp() {
     res.send(await register.metrics());
   });
 
-  // Próximo paso: app.use('/api/v1/orders', requireUser, ordersRouter);
+  app.use('/api/v1/orders', requireUser, ordersRouter);
 
   app.use(notFoundHandler);
   app.use(errorHandler);
