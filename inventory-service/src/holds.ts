@@ -12,8 +12,8 @@ import { pool } from "./db";
 //                              para que el barrido del paso 4 pueda publicar hold.expired
 //   holds:expiry            -> sorted set (score = vencimiento en ms) que usará ese barrido
 const GRACE_SECONDS = 3600;
-const EXPIRY_INDEX = "holds:expiry";
-const holdKey = (holdId: string) => `hold:${holdId}`;
+export const EXPIRY_INDEX = "holds:expiry";
+export const holdKey = (holdId: string) => `hold:${holdId}`;
 export const seatKey = (eventId: string, seatId: string) => `seat:${eventId}:${seatId}`;
 
 // Los scripts Lua corren de forma atómica en Redis: nadie se mete a mitad.
