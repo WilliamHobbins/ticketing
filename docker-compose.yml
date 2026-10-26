@@ -138,6 +138,7 @@ services:
     depends_on:
       - users-service
       - nginx-exporter
+      - orders-service
     restart: unless-stopped
 
   grafana:

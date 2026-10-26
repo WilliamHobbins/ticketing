@@ -17,5 +17,7 @@ scrape_configs:
   #   static_configs: [{ targets: ["catalog-service:PUERTO"] }]
   # - job_name: "inventory-service"
   #   static_configs: [{ targets: ["inventory-service:PUERTO"] }]
-  # - job_name: "orders-service"
-  #   static_configs: [{ targets: ["orders-service:PUERTO"] }]
+  - job_name: "orders-service"
+    metrics_path: /metrics
+    static_configs:
+       - targets: ["orders-service:3004"]
