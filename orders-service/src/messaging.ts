@@ -58,10 +58,16 @@ export async function connectBroker(maxAttempts = 10, delayMs = 3000): Promise<v
 }
 
 // Publica un evento en el exchange; la routing key es el tipo del evento.
-export async function publishEvent<T>(type: string, data: T, correlationId: string): Promise<string> {
+// messageId es opcional: el outbox pasa el suyo para que un reintento republique el MISMO id.
+export async function publishEvent<T>(
+  type: string,
+  data: T,
+  correlationId: string,
+  messageId: string = randomUUID(),
+): Promise<string> {
   if (!channel) throw new Error('RabbitMQ no está conectado');
   const envelope: EventEnvelope<T> = {
-    messageId: randomUUID(),
+    messageId,
     type,
     version: 1,
     occurredAt: new Date().toISOString(),
