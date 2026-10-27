@@ -75,6 +75,32 @@ services:
       start_period: 10s
     restart: unless-stopped
 
+  orders-service:
+    build:
+      context: ./orders-service
+    environment:
+      NODE_ENV: production
+      PORT: 3004
+      DATABASE_URL: postgres://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/ticketing_orders
+      BROKER_URL: amqp://${RABBITMQ_USER}:${RABBITMQ_PASSWORD}@rabbitmq:5672
+      INVENTORY_URL: ${INVENTORY_URL:-http://inventory-service:3003}
+      EVENTS_EXCHANGE: ticketing.events
+      LOG_LEVEL: ${LOG_LEVEL:-info}
+    depends_on:
+      postgres:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+    expose:
+      - "3004"
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:3004/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 10s
+      timeout: 3s
+      retries: 10
+      start_period: 15s
+    restart: unless-stopped
+    
   gateway:
     image: nginx:1.27-alpine
     depends_on:
@@ -115,6 +141,7 @@ services:
     depends_on:
       - users-service
       - nginx-exporter
+      - orders-service
     restart: unless-stopped
 
   grafana:
