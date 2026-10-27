@@ -1,4 +1,6 @@
 import { Pool, PoolClient } from 'pg';
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
 import { config } from './config';
 import { log } from './logger';
 
@@ -18,42 +20,16 @@ export async function waitForDb(tries = 30) {
   }
 }
 
+// El esquema vive en db/schema.sql (src/ y dist/ están un nivel debajo de la raíz del servicio).
 export async function migrate() {
-  await pool.query(`
-    CREATE SCHEMA IF NOT EXISTS catalog;
-    CREATE TABLE IF NOT EXISTS catalog.venues (
-      id uuid PRIMARY KEY DEFAULT gen_random_uuid(), name text NOT NULL, city text NOT NULL, address text,
-      created_at timestamptz NOT NULL DEFAULT now());
-    CREATE TABLE IF NOT EXISTS catalog.sectors (
-      id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
-      venue_id uuid NOT NULL REFERENCES catalog.venues(id) ON DELETE CASCADE,
-      name text NOT NULL, rows int NOT NULL CHECK (rows BETWEEN 1 AND 26),
-      seats_per_row int NOT NULL CHECK (seats_per_row BETWEEN 1 AND 60),
-      price_factor numeric(4,2) NOT NULL DEFAULT 1 CHECK (price_factor > 0));
-    CREATE TABLE IF NOT EXISTS catalog.seats (
-      id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
-      sector_id uuid NOT NULL REFERENCES catalog.sectors(id) ON DELETE CASCADE,
-      row_label text NOT NULL, number int NOT NULL, UNIQUE (sector_id, row_label, number));
-    CREATE TABLE IF NOT EXISTS catalog.events (
-      id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
-      venue_id uuid NOT NULL REFERENCES catalog.venues(id),
-      title text NOT NULL, description text, category text NOT NULL DEFAULT 'General',
-      starts_at timestamptz NOT NULL, base_price numeric(10,2) NOT NULL CHECK (base_price >= 0),
-      created_at timestamptz NOT NULL DEFAULT now());
-    -- Estado de asientos por evento. SOLO PARA DEMO: la fuente de verdad será el servicio de inventario/reservas.
-    CREATE TABLE IF NOT EXISTS catalog.event_seat_status (
-      event_id uuid NOT NULL REFERENCES catalog.events(id) ON DELETE CASCADE,
-      seat_id uuid NOT NULL REFERENCES catalog.seats(id) ON DELETE CASCADE,
-      status text NOT NULL, PRIMARY KEY (event_id, seat_id));
-    CREATE INDEX IF NOT EXISTS events_starts_at_idx ON catalog.events (starts_at);
-  `);
+  await pool.query(readFileSync(join(__dirname, '..', 'db', 'schema.sql'), 'utf8'));
 }
 
 export async function generateSeats(c: PoolClient, sectorId: string, rows: number, perRow: number) {
   await c.query(
-    `INSERT INTO catalog.seats(sector_id,row_label,number)
+      `INSERT INTO catalog.seats(sector_id,row_label,number)
      SELECT $1, chr(64 + r), n FROM generate_series(1,$2::int) r, generate_series(1,$3::int) n`,
-    [sectorId, rows, perRow]);
+      [sectorId, rows, perRow]);
 }
 
 export async function seed() {
@@ -86,9 +62,9 @@ export async function seed() {
     }
     for (const [vi, title, desc, cat, days, price] of events)
       await c.query(
-        `INSERT INTO catalog.events(venue_id,title,description,category,starts_at,base_price)
+          `INSERT INTO catalog.events(venue_id,title,description,category,starts_at,base_price)
          VALUES ($1,$2,$3,$4, date_trunc('day', now()) + ($5::int * interval '1 day') + interval '21 hours', $6)`,
-        [ids[vi], title, desc, cat, days, price]);
+          [ids[vi], title, desc, cat, days, price]);
     // ~15% de asientos "vendidos" de forma determinística, para que el mapa de la demo no se vea vacío
     await c.query(`INSERT INTO catalog.event_seat_status(event_id, seat_id, status)
       SELECT e.id, s.id, 'sold' FROM catalog.events e
