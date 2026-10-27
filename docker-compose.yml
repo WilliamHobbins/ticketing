@@ -21,6 +21,8 @@ services:
 
   redis:
     image: redis:7-alpine
+    environment:
+      TZ: America/Montevideo
     command: ["redis-server", "--appendonly", "yes"]
     ports:
       - "${REDIS_PORT:-6379}:6379"
