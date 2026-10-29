@@ -73,7 +73,7 @@ redis.call('ZADD', KEYS[2], newExp, ARGV[1])
 return newExp
 `;
 
-interface StoredHold {
+export interface StoredHold {
   holdId: string;
   userId: string;
   eventId: string;
@@ -109,7 +109,7 @@ async function checkSeatsAndPrice(eventId: string, seatIds: string[]): Promise<n
   return Math.round(total * 100) / 100; // evita restos de decimales (0.1 + 0.2)
 }
 
-async function loadHold(holdId: string): Promise<StoredHold | null> {
+export async function loadHold(holdId: string): Promise<StoredHold | null> {
   const h = await redis.hgetall(holdKey(holdId));
   if (!h.expiresAt) return null;
   return {
@@ -199,4 +199,62 @@ export async function extendHold(holdId: string) {
 
   if (newExpiry < 0) throw holdExpired();
   return { holdId, expiresAt: new Date(newExpiry).toISOString() };
+}
+
+// ---------- Confirmación de venta ----------
+
+const CLAIM_MS = 60_000; // cuánto "reservamos" los asientos mientras se confirma la venta
+
+// Se usa cuando ya se cobró: deja los asientos a nombre de este hold por un rato,
+// para que nadie los tome mientras se confirma en Postgres. También saca el hold del
+// índice de vencimientos, para que el barrido no publique hold.expired de un hold pagado.
+// KEYS: [EXPIRY_INDEX, ...seatKeys]   ARGV: holdId, claimMs
+// Devuelve [] si todo quedó a nombre de este hold, o los índices (base 1) de los
+// asientos que pertenecen a OTRO hold (en ese caso no toca nada).
+const CLAIM_FOR_SALE_SCRIPT = `
+local conflicts = {}
+for i = 2, #KEYS do
+  local owner = redis.call('GET', KEYS[i])
+  if owner and owner ~= ARGV[1] then
+    table.insert(conflicts, i - 1)
+  end
+end
+if #conflicts > 0 then return conflicts end
+for i = 2, #KEYS do
+  if not redis.call('GET', KEYS[i]) then
+    redis.call('SET', KEYS[i], ARGV[1], 'PX', ARGV[2])
+  elseif redis.call('PTTL', KEYS[i]) < tonumber(ARGV[2]) then
+    redis.call('PEXPIRE', KEYS[i], ARGV[2])
+  end
+end
+redis.call('ZREM', KEYS[1], ARGV[1])
+return {}
+`;
+
+// Devuelve los seatIds que están tomados por otro hold ([] = todo bien).
+export async function claimSeatsForSale(
+  holdId: string,
+  eventId: string,
+  seatIds: string[],
+): Promise<string[]> {
+  const keys = [EXPIRY_INDEX, ...seatIds.map((s) => seatKey(eventId, s))];
+  const conflicts = (await redis.eval(
+    CLAIM_FOR_SALE_SCRIPT,
+    keys.length,
+    ...keys,
+    holdId,
+    String(CLAIM_MS),
+  )) as number[];
+  return conflicts.map((i) => seatIds[i - 1] as string);
+}
+
+// Limpieza final de un hold que ya se resolvió (vendido, rechazado o pago fallido).
+// Idempotente: se puede repetir sin problema. No pisa asientos de otro hold.
+export async function releaseHoldKeys(
+  holdId: string,
+  eventId: string,
+  seatIds: string[],
+): Promise<void> {
+  const keys = [holdKey(holdId), EXPIRY_INDEX, ...seatIds.map((s) => seatKey(eventId, s))];
+  await redis.eval(RELEASE_SCRIPT, keys.length, ...keys, holdId);
 }
