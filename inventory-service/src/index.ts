@@ -9,7 +9,7 @@ import { startConsumer } from "./consumer";
 import { startSweeper } from "./sweeper";
 import { startPaymentConsumers } from "./payments";
 import { httpMetrics, register } from "./metrics";
-import { requestLogger } from "./logger";
+import { errorMessage, logger, requestLogger } from "./logger";
 
 const app = express();
 
@@ -77,12 +77,16 @@ app.use((err: any, _req: Request, res: Response, _next: NextFunction) => {
   if (err?.type === "entity.too.large") {
     return res.status(413).json({ error: { code: "PAYLOAD_TOO_LARGE", message: "El body es demasiado grande" } });
   }
-  console.error("Unhandled error:", err);
+  logger.error("Unhandled error", {
+  correlationId: res.locals.correlationId as string,
+  error: errorMessage(err),
+  stack: err?.stack,
+});
   res.status(500).json({ error: { code: "INTERNAL_ERROR", message: "Error interno" } });
 });
 
 app.listen(config.port, () => {
-  console.log(`inventory-service listening on port ${config.port}`);
+  logger.info("inventory-service listening", { port: config.port });
   void startConsumer();
   void startSweeper();
   startPaymentConsumers();
