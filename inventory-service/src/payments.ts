@@ -8,6 +8,7 @@ import {
   salesConfirmedTotal,
   salesRejectedTotal,
 } from "./metrics";
+import { logger } from "./logger";
 
 const ID = /^[\w-]{1,64}$/;
 const isId = (v: unknown): v is string => typeof v === "string" && ID.test(v);
@@ -118,7 +119,7 @@ async function handleSucceeded(m: PaymentSucceeded): Promise<string> {
   }
   if (result.kind === "rejected") {
     salesRejectedTotal.inc({ reason: result.reason });
-    console.warn(`Venta rechazada, pedido ${orderId}: ${result.reason}`);
+    logger.warn("Venta rechazada", { correlationId: m.correlationId, orderId, holdId, reason: result.reason });
     return `rechazado ${result.reason}`;
   }
   return "duplicate";
@@ -128,6 +129,7 @@ async function handleSucceeded(m: PaymentSucceeded): Promise<string> {
 
 interface PaymentFailed {
   messageId: string;
+  correlationId: string;
   data: { orderId: string; holdId: string; reason: string };
 }
 
@@ -138,6 +140,7 @@ function parseFailed(msg: ConsumeMessage): PaymentFailed {
   if (!isId(d.holdId)) throw new InvalidMessage("holdId inválido");
   return {
     messageId: env.messageId,
+    correlationId: env.correlationId,
     data: { orderId: d.orderId, holdId: d.holdId, reason: typeof d.reason === "string" ? d.reason : "" },
   };
 }
@@ -156,7 +159,7 @@ async function handleFailed(m: PaymentFailed): Promise<string> {
     holdsReleasedByPaymentTotal.inc();
     result = `hold ${hold.holdId} liberado`;
   } else {
-    console.warn(`payment.failed: el hold ${m.data.holdId} ya no existe en Redis`);
+    logger.warn("payment.failed: el hold ya no existe en Redis", { correlationId: m.correlationId, holdId: m.data.holdId, orderId: m.data.orderId });
   }
 
   await pool.query(
