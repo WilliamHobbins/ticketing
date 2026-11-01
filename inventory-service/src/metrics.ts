@@ -51,3 +51,43 @@ export function httpMetrics(req: Request, res: Response, next: NextFunction): vo
   });
   next();
 }
+
+// ---------- Métricas de negocio ----------
+
+export const holdsCreatedTotal = new client.Counter({
+  name: "holds_created_total",
+  help: "Holds (reservas temporales) creados con éxito",
+  registers: [register],
+});
+
+export const holdsExpiredTotal = new client.Counter({
+  name: "holds_expired_total",
+  help: "Holds vencidos cuyo evento hold.expired se publicó",
+  registers: [register],
+});
+
+export const holdExpiredPublishErrorsTotal = new client.Counter({
+  name: "hold_expired_publish_errors_total",
+  help: "Fallos al publicar hold.expired (se reintentan solos)",
+  registers: [register],
+});
+
+export const salesConfirmedTotal = new client.Counter({
+  name: "sales_confirmed_total",
+  help: "Ventas confirmadas (asientos pasados a SOLD)",
+  registers: [register],
+});
+
+// reason tiene solo 3 valores posibles (SEAT_TAKEN, SEAT_ALREADY_SOLD, SEAT_NOT_FOUND).
+export const salesRejectedTotal = new client.Counter({
+  name: "sales_rejected_total",
+  help: "Ventas rechazadas (se publicó sale.rejected)",
+  labelNames: ["reason"],
+  registers: [register],
+});
+
+export const holdsReleasedByPaymentTotal = new client.Counter({
+  name: "holds_released_by_payment_total",
+  help: "Holds liberados por un payment.failed",
+  registers: [register],
+});

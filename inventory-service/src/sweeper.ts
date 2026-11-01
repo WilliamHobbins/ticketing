@@ -3,12 +3,10 @@ import { config } from "./config";
 import { EXPIRY_INDEX, holdKey } from "./holds";
 import { deterministicUuid, publishEvent } from "./publisher";
 import { redis } from "./redis";
+import { holdExpiredPublishErrorsTotal, holdsExpiredTotal } from "./metrics";
 
 const LEASE_MS = 30_000; // tiempo que tiene un barrido para publicar antes de que otro reintente
 const BATCH = 100;
-
-// Contadores en memoria; en el paso 7 se exponen en /metrics.
-export const sweeperStats = { holdsExpired: 0, publishErrors: 0 };
 
 // Atómico: toma los holds vencidos y les corre el score hacia adelante (lease).
 // KEYS: [EXPIRY_INDEX]   ARGV: nowMs, leaseMs, limit
@@ -51,7 +49,7 @@ async function expireOne(holdId: string): Promise<void> {
 
   // Recién ahora, con la publicación confirmada, sacamos el hold del índice.
   await redis.zrem(EXPIRY_INDEX, holdId);
-  sweeperStats.holdsExpired++;
+  holdsExpiredTotal.inc();
   console.log(`hold.expired publicado: ${holdId}`);
 }
 
@@ -70,7 +68,7 @@ async function sweepOnce(): Promise<void> {
       await expireOne(holdId);
     } catch (err) {
       // Queda con el lease: en ~30 s vuelve a estar vencido y se reintenta solo.
-      sweeperStats.publishErrors++;
+      holdExpiredPublishErrorsTotal.inc();
       console.error(`No se pudo publicar hold.expired de ${holdId}:`, (err as Error).message);
     }
   }

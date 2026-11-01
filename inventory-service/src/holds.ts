@@ -3,7 +3,7 @@ import { config } from "./config";
 import { ApiError } from "./errors";
 import { redis } from "./redis";
 import { pool } from "./db";
-
+import { holdsCreatedTotal } from "./metrics";
 
 
 // Claves en Redis:
@@ -164,7 +164,7 @@ export async function createHold(userId: string, eventId: string, seatIds: strin
       seatIds: sold.rows.map((r) => r.seat_id as string),
     });
   }
-
+  holdsCreatedTotal.inc();
   return { holdId, eventId, seatIds, expiresAt: new Date(expiresAtMs).toISOString() };
 }
 
