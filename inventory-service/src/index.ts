@@ -7,6 +7,7 @@ import { pool } from "./db";
 import { redis } from "./redis";
 import { startConsumer } from "./consumer";
 import { startSweeper } from "./sweeper";
+import { startPaymentConsumers } from "./payments";
 
 const app = express();
 
@@ -73,4 +74,5 @@ app.listen(config.port, () => {
   console.log(`inventory-service listening on port ${config.port}`);
   void startConsumer();
   void startSweeper();
+  startPaymentConsumers();
 });

@@ -1,15 +1,8 @@
-import amqp, { ConsumeMessage } from "amqplib";
-import { config } from "./config";
+import { ConsumeMessage } from "amqplib";
 import { pool } from "./db";
+import { InvalidMessage, startQueueConsumer } from "./messaging";
 
-const EXCHANGE = "ticketing.events";
-const DLX = "ticketing.events.dlx";
-const QUEUE = "inventory.event-created";
-const DLQ = "inventory.event-created.dlq";
 const MAX_SEATS_PER_SECTOR = 5000;
-
-// Mensaje mal formado: no tiene sentido reintentarlo, va directo a la DLQ.
-class InvalidMessage extends Error {}
 
 interface Sector {
   name: string;
@@ -100,51 +93,10 @@ async function processEvent(m: EventCreated): Promise<"created" | "duplicate"> {
   }
 }
 
-async function runConsumer(): Promise<void> {
-  const conn = await amqp.connect(config.brokerUrl);
-  conn.on("error", (err) => console.error("RabbitMQ connection error:", err.message));
-  const ch = await conn.createChannel();
-
-  await ch.assertExchange(EXCHANGE, "topic", { durable: true });
-  await ch.assertExchange(DLX, "direct", { durable: true });
-  await ch.assertQueue(DLQ, { durable: true });
-  await ch.bindQueue(DLQ, DLX, QUEUE);
-  await ch.assertQueue(QUEUE, {
-    durable: true,
-    arguments: { "x-dead-letter-exchange": DLX, "x-dead-letter-routing-key": QUEUE },
+export function startConsumer(): Promise<void> {
+  return startQueueConsumer({
+    queue: "inventory.event-created",
+    routingKey: "event.created",
+    handler: async (msg) => processEvent(parseMessage(msg)),
   });
-  await ch.bindQueue(QUEUE, EXCHANGE, "event.created");
-  await ch.prefetch(10);
-
-  await ch.consume(QUEUE, async (msg) => {
-    if (!msg) return;
-    try {
-      const result = await processEvent(parseMessage(msg));
-      console.log(`event.created ${result}`);
-      ch.ack(msg);
-    } catch (err) {
-      if (err instanceof InvalidMessage) {
-        console.error("Mensaje inválido, va a la DLQ:", err.message);
-        ch.nack(msg, false, false); // requeue=false -> dead-letter
-      } else {
-        console.error("Error procesando event.created, se reintenta:", err);
-        setTimeout(() => ch.nack(msg, false, true), 2000); // requeue=true
-      }
-    }
-  });
-
-  console.log(`Consumidor escuchando la cola ${QUEUE}`);
-  await new Promise<void>((resolve) => conn.on("close", () => resolve()));
-}
-
-// Si RabbitMQ no está o se cae, reintenta cada 5 s sin tumbar el servicio HTTP.
-export async function startConsumer(): Promise<void> {
-  for (;;) {
-    try {
-      await runConsumer();
-    } catch (err) {
-      console.error("No se pudo conectar a RabbitMQ:", (err as Error).message);
-    }
-    await new Promise((r) => setTimeout(r, 5000));
-  }
 }
