@@ -296,3 +296,95 @@ Cuando un hold vence, sus asientos se liberan solos (la clave `seat:*` tiene TTL
 - El barrido compara con la hora del host y los asientos se liberan por la hora de Redis. Con relojes sincronizados no hay diferencia; se comprobó que hoy coinciden.
 - Los contadores están en memoria y se reinician con el servicio.
 - La deduplicación por `messageId` no se probó a mano (requiere que falle el `ZREM` después de una publicación confirmada); está cubierta por diseño.
+
+## Confirmación de venta (`payment.succeeded` y `payment.failed`)
+
+### Qué hace
+Inventory consume dos eventos que publica orders-service y decide qué pasa con los asientos reservados:
+
+| Evento recibido | Qué hace inventory | Qué publica |
+|---|---|---|
+| `payment.succeeded` | Marca los asientos como `SOLD` en Postgres y limpia el hold en Redis. | `sale.rejected` solo si no se puede vender. |
+| `payment.failed` | Libera el hold en Redis (los asientos vuelven a estar disponibles). | Nada. |
+
+`payment.failed` no trae `eventId` ni `seatIds` (así lo define el contrato), por lo que inventory los lee del hash `hold:{holdId}` en Redis, que sigue disponible una hora después del vencimiento.
+
+### Evento nuevo: `sale.rejected`
+Se publica cuando se cobró un pedido pero los asientos ya no se pueden vender. Datos: `orderId`, `holdId`, `eventId`, `seatIds` y `reason`.
+
+| `reason` | Cuándo ocurre |
+|---|---|
+| `SEAT_ALREADY_SOLD` | Algún asiento ya está vendido a **otro** pedido. |
+| `SEAT_TAKEN` | Los asientos pertenecen hoy a **otro hold** activo (el hold original venció y alguien más los reservó). |
+| `SEAT_NOT_FOUND` | Algún asiento no existe en el evento. |
+
+El `messageId` se deriva del `orderId` (`deterministicUuid("sale.rejected:" + orderId)`): si el evento se publica dos veces, el consumidor lo reconoce como el mismo mensaje. Conserva el `correlationId` del `payment.succeeded` que lo originó.
+
+### Colas
+Una cola por tipo de evento, cada una con su dead-letter queue (patrón ya usado en `event.created`):
+
+| Cola | Routing key | DLQ |
+|---|---|---|
+| `inventory.event-created` | `event.created` | `inventory.event-created.dlq` |
+| `inventory.payment-succeeded` | `payment.succeeded` | `inventory.payment-succeeded.dlq` |
+| `inventory.payment-failed` | `payment.failed` | `inventory.payment-failed.dlq` |
+
+Un mensaje mal formado (JSON inválido, falta un campo, ids con caracteres raros) va directo a la DLQ, porque reintentarlo no lo arregla. Un error de infraestructura (Postgres o Redis caídos) se reencola con 2 segundos de espera. El `ack` se hace recién después de terminar el trabajo (principio de entrega *at-least-once*).
+
+La lógica común (conexión, DLQ, ack/nack, reconexión cada 5 s) se extrajo a `src/messaging.ts`, y los tres consumidores la reutilizan. Archivos del paso: `src/messaging.ts` (nuevo), `src/payments.ts` (nuevo), `src/consumer.ts` (ahora usa `messaging.ts`), `src/holds.ts` (dos funciones nuevas) e `src/index.ts` (arranca los consumidores).
+
+### Flujo de `payment.succeeded`
+Redis y Postgres no pueden compartir una transacción, así que el orden importa:
+
+1. **Reclamo en Redis** (`claimSeatsForSale`, un script Lua atómico). Si los asientos siguen a nombre de este hold, o están libres (el hold venció o se liberó), quedan reservados 60 s a su nombre. Si pertenecen a **otro** hold, no toca nada y se rechaza la venta con `SEAT_TAKEN`. El mismo script saca el hold de `holds:expiry`, para que el barrido no publique `hold.expired` de un hold ya pagado.
+2. **Transacción en Postgres** (`sellInPostgres`):
+   - registra el `messageId` en `processed_messages`; si ya estaba, es un duplicado y termina;
+   - bloquea las filas de los asientos con `SELECT ... ORDER BY seat_id FOR UPDATE`;
+   - si falta algún asiento o está vendido a otro pedido, publica `sale.rejected`; si no, hace `UPDATE ... SET status='SOLD', order_id=...`;
+   - `COMMIT`.
+3. **Limpieza en Redis** (`releaseHoldKeys`, reutiliza el script que ya usaba `DELETE /holds`): borra los `seat:*` que siguen siendo de este hold, el hash del hold y su entrada en `holds:expiry`.
+4. `ack`.
+
+### Decisiones de diseño
+- **Vender aunque el hold haya vencido.** El dinero ya se cobró. Si los asientos están libres, se venden igual; solo se rechaza si alguien más los tiene o ya los compró.
+- **Reclamo atómico en Redis antes de vender.** Si solo se consultara Redis y después se vendiera en Postgres, otro usuario podría reservar el asiento en el medio. El reclamo cierra esa ventana.
+- **La limpieza nunca pisa a otro hold.** Solo se borran las claves `seat:*` cuyo valor es el `holdId` de este pago (comparación dentro del script Lua).
+- **Idempotencia en dos niveles.** Por `messageId` (`processed_messages`) y por negocio: si el mismo pedido llega con otro `messageId`, los asientos ya vendidos con ese `order_id` se consideran vendidos correctamente, no rechazados.
+- **Orden fijo al bloquear filas** (`ORDER BY seat_id`). Dos ventas con asientos en común no pueden quedarse esperándose mutuamente (deadlock).
+- **`sale.rejected` se publica antes del `COMMIT`.** Con confirmación del broker y `messageId` determinístico. Si el `COMMIT` falla, el mensaje se reintenta y se vuelve a publicar el mismo evento, que el consumidor deduplica; nunca queda un rechazo sin avisar.
+- **La limpieza corre también con mensajes duplicados.** Si el proceso se cae entre el `COMMIT` y la limpieza de Redis, el reintento termina el trabajo.
+- **`payment.failed`: liberar primero, anotar el `messageId` después.** Liberar es idempotente, así que repetirlo no daña.
+
+### Qué pasa si algo falla
+| Momento del fallo | Resultado |
+|---|---|
+| Antes del reclamo o durante la transacción | `ROLLBACK`, el mensaje se reencola, no se vendió nada. Las claves reclamadas vencen solas a los 60 s. |
+| Después del `COMMIT`, antes de limpiar Redis | El reintento ve el `messageId` ya procesado, no vuelve a vender y completa la limpieza. |
+| Se publicó `sale.rejected` pero falló el `COMMIT` | El reintento publica el mismo `messageId`; no hay duplicados efectivos. |
+| Redis o Postgres caídos | Error de infraestructura: el mensaje se reencola cada 2 s hasta que vuelvan. |
+| Mensaje inválido | Va a la DLQ de su cola, sin reintentos. |
+
+### Pruebas realizadas (manuales, con eventos publicados desde el panel de RabbitMQ)
+Datos: evento `evt-1`. Todas con resultado esperado.
+
+| # | Caso | Resultado observado |
+|---|---|---|
+| 1 | Venta normal con hold vigente | Asiento `SOLD` con el `order_id`; Redis sin `seat:*`, sin `hold:*` y sin entrada en `holds:expiry`. |
+| 2 | Mismo mensaje publicado dos veces | Segundo mensaje reconocido como `duplicate`; una sola fila en `processed_messages` y una sola venta. |
+| 3 | Hold liberado (simula vencimiento) con el asiento libre | Se vende igual. |
+| 4 | Asiento ya vendido a otro pedido | Venta rechazada con `SEAT_ALREADY_SOLD`; el asiento conserva el pedido original; llega `sale.rejected` con el mismo `correlationId`. |
+| 5 | Asiento tomado por otro hold | Rechazo con `SEAT_TAKEN`; la reserva del otro usuario queda intacta en Redis. |
+| 6 | `payment.failed` | Hold liberado, asiento otra vez `AVAILABLE`, índice de vencimientos vacío, sin evento publicado. |
+
+### Limitaciones conocidas
+- **Carrera con el barrido.** Si `payment.succeeded` llega cuando el barrido ya publicó `hold.expired`, orders recibe ambos eventos. A acordar con el Rol 4 que el pago confirmado prevalece.
+- **Ventana en `POST /holds`.** Se valida en Postgres que el asiento no esté vendido y después se reserva en Redis. Si una venta se confirma justo en el medio, podría crearse un hold sobre un asiento vendido. Se corrige solo: cuando ese usuario pague, inventory rechaza la venta con `SEAT_ALREADY_SOLD`.
+- **El notifier es independiente.** Emite la entrada al recibir `payment.succeeded`, sin esperar el resultado de inventory. Falta acordar con el Rol 4 qué hace orders (reembolso o aviso) al recibir `sale.rejected`.
+- **`sale.rejected` necesita una cola.** Si orders no crea una cola enlazada a `ticketing.events` con la routing key `sale.rejected`, RabbitMQ descarta los mensajes en silencio.
+- **La publicación ocurre con la transacción abierta.** Solo en el camino de rechazo; si RabbitMQ tarda, las filas de esos asientos quedan bloqueadas ese tiempo.
+- **Contadores en memoria.** `paymentStats` (ventas confirmadas, rechazadas y holds liberados por pago) se reinicia con el servicio; se exponen en `/metrics` en el paso 7.
+
+### Cambios al contrato
+- Evento nuevo `sale.rejected` (datos y motivos arriba): sumarlo al documento de contratos.
+- Orders tiene que incluir `holdId` en `payment.failed`.
+
