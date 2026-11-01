@@ -58,4 +58,38 @@ describe("Idempotencia del consumidor payment.succeeded", () => {
       await listener.close();
     }
   });
+
+  it("dos ventas concurrentes sobre el mismo asiento: una vende y la otra se rechaza", async () => {
+    const listener = await startSaleRejectedListener();
+    try {
+      const a = { messageId: `test-${randomUUID()}`, orderId: "o-test-A", holdId: "h-test-A", seatIds: ["T1-2"] };
+      const b = { messageId: `test-${randomUUID()}`, orderId: "o-test-B", holdId: "h-test-B", seatIds: ["T1-2"] };
+
+      await Promise.all([publishPaymentSucceeded(a), publishPaymentSucceeded(b)]);
+
+      // Las dos filas de processed_messages aparecen cuando ambos mensajes se resolvieron.
+      await waitFor(
+        async () => (await countProcessed(a.messageId)) === 1 && (await countProcessed(b.messageId)) === 1,
+        "que se procesen los dos mensajes",
+      );
+      await waitFor(async () => listener.rejected().length >= 1, "el sale.rejected del perdedor");
+      await sleep(500); // margen por si llegara un segundo rechazo inesperado
+
+      const rejected = listener.rejected();
+      assert.equal(rejected.length, 1, "se rechaza exactamente una venta");
+      const loserOrder = rejected[0].data.orderId as string;
+      assert.ok(["o-test-A", "o-test-B"].includes(loserOrder));
+      assert.ok(
+        ["SEAT_ALREADY_SOLD", "SEAT_TAKEN"].includes(rejected[0].data.reason),
+        `motivo inesperado: ${rejected[0].data.reason}`,
+      );
+
+      const winnerOrder = loserOrder === "o-test-A" ? "o-test-B" : "o-test-A";
+      const seat = await getSeat("T1-2");
+      assert.equal(seat.status, "SOLD");
+      assert.equal(seat.order_id, winnerOrder, "el asiento quedó con un solo order_id: el del ganador");
+    } finally {
+      await listener.close();
+    }
+  });
 });
