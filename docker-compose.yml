@@ -100,13 +100,15 @@ services:
       retries: 10
       start_period: 15s
     restart: unless-stopped
-    
+
   gateway:
     image: nginx:1.27-alpine
     depends_on:
       users-service:
         condition: service_healthy
       catalog-service:
+        condition: service_healthy
+      inventory-service:
         condition: service_healthy
     ports:
       - "${GATEWAY_PORT:-8080}:8080"
@@ -166,12 +168,15 @@ services:
       NODE_ENV: ${NODE_ENV:-development}   # en producción: NODE_ENV=production (apaga GraphiQL e introspección)
       DATABASE_URL: postgres://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/ticketing_catalog
       REDIS_URL: redis://redis:6379
+      BROKER_URL: amqp://${RABBITMQ_USER}:${RABBITMQ_PASSWORD}@rabbitmq:5672
       CATALOG_CACHE_TTL: 60
       LOG_LEVEL: ${LOG_LEVEL:-info}
     depends_on:
       postgres:
         condition: service_healthy
       redis:
+        condition: service_healthy
+      rabbitmq:
         condition: service_healthy
     expose:
       - "3002"
@@ -181,6 +186,35 @@ services:
       timeout: 3s
       retries: 10
       start_period: 10s
+    restart: unless-stopped
+
+  inventory-service:
+    build: ./inventory-service
+    environment:
+      NODE_ENV: production
+      PORT: 3003
+      DATABASE_URL: postgres://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/ticketing_inventory
+      REDIS_URL: redis://redis:6379/1   # base 1 de Redis: no comparte claves con el caché del catálogo
+      BROKER_URL: amqp://${RABBITMQ_USER}:${RABBITMQ_PASSWORD}@rabbitmq:5672
+      HOLD_TTL_SECONDS: ${HOLD_TTL_SECONDS:-600}
+      HOLD_EXTEND_SECONDS: ${HOLD_EXTEND_SECONDS:-120}
+      SWEEP_INTERVAL_SECONDS: 5
+      LOG_LEVEL: ${LOG_LEVEL:-info}
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+    expose:
+      - "3003"
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:3003/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 10s
+      timeout: 3s
+      retries: 10
+      start_period: 15s
     restart: unless-stopped
 
 volumes:

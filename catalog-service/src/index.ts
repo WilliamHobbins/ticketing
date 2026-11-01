@@ -9,6 +9,8 @@ import { redis } from './cache';
 import { router, health } from './routes';
 import { yoga } from './graphql';
 import { registry, httpDuration } from './metrics';
+import { startRepublisher } from './sync';
+import { closePublisher } from './publisher';
 
 const app = express();
 app.disable('x-powered-by');
@@ -45,7 +47,12 @@ async function main() {
   await migrate();
   if (config.seed) await seed();
   const server = app.listen(config.port, () => log.info({ port: config.port, env: config.env }, 'catalog-service listo'));
-  const stop = () => server.close(async () => { await pool.end(); redis.disconnect(); process.exit(0); });
+  const republisher = startRepublisher();
+  const stop = () => server.close(async () => {
+    clearInterval(republisher);
+    await closePublisher();
+    await pool.end(); redis.disconnect(); process.exit(0);
+  });
   process.on('SIGTERM', stop); process.on('SIGINT', stop);
 }
 main().catch((e) => { log.fatal(e); process.exit(1); });

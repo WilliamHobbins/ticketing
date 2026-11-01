@@ -42,6 +42,9 @@ aside li{display:flex;justify-content:space-between;gap:12px;padding:8px 0;borde
 input{width:100%;padding:11px;margin:0 0 10px;border:1.5px solid var(--line);border-radius:8px;font:inherit}
 .msg{color:#b3261e;font-size:14px;margin:10px 0 0}
 .ok h3{color:var(--cobalt)}
+.seat.held { background: transparent; border-style: dashed; color: var(--muted); cursor: not-allowed; }
+.legend i.held { border-style: dashed; }
 @media (max-width:820px){.layout{grid-template-columns:1fr}aside{position:static}.row{grid-template-columns:64px 1fr}.price{grid-column:2;text-align:left}}
 @media (prefers-reduced-motion:no-preference){.seat{transition:background .12s}}
 button.back{background:none;border:0;cursor:pointer;font:inherit;padding:0}
+
