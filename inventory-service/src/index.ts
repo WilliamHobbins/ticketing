@@ -8,6 +8,7 @@ import { redis } from "./redis";
 import { startConsumer } from "./consumer";
 import { startSweeper } from "./sweeper";
 import { startPaymentConsumers } from "./payments";
+import { register } from "./metrics";
 
 const app = express();
 
@@ -42,6 +43,11 @@ app.get("/health", async (_req, res) => {
     postgres,
     redis: redisStatus,
   });
+});
+
+app.get("/metrics", async (_req, res) => {
+  res.setHeader("Content-Type", register.contentType);
+  res.send(await register.metrics());
 });
 
 app.use("/api/v1/holds", holdsRouter);
