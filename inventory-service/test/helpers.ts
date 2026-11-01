@@ -91,20 +91,43 @@ export async function postHold(userId: string, seatIds: string[]): Promise<HttpR
 type Conn = Awaited<ReturnType<typeof amqp.connect>>;
 type ConfirmCh = Awaited<ReturnType<Conn["createConfirmChannel"]>>;
 
-let conn: Conn | null = null;
-let pubCh: ConfirmCh | null = null;
+let connPromise: Promise<Conn> | null = null;
+let pubPromise: Promise<ConfirmCh> | null = null;
 
-async function getConn(): Promise<Conn> {
-  if (!conn) conn = await amqp.connect(config.brokerUrl);
-  return conn;
+// Se guarda la promesa (no el valor) para que llamadas simultáneas compartan una sola conexión.
+function getConn(): Promise<Conn> {
+  connPromise ??= amqp.connect(config.brokerUrl);
+  return connPromise;
 }
 
-async function getPublisher(): Promise<ConfirmCh> {
-  if (!pubCh) {
-    pubCh = await (await getConn()).createConfirmChannel();
-    await pubCh.assertExchange(EXCHANGE, "topic", { durable: true });
-  }
-  return pubCh;
+function getPublisher(): Promise<ConfirmCh> {
+  pubPromise ??= (async () => {
+    const ch = await (await getConn()).createConfirmChannel();
+    await ch.assertExchange(EXCHANGE, "topic", { durable: true });
+    return ch;
+  })();
+  return pubPromise;
+}
+
+async function publishRaw(routingKey: string, type: string, messageId: string, data: Record<string, unknown>) {
+  const ch = await getPublisher();
+  const envelope = {
+    messageId,
+    type,
+    version: 1,
+    occurredAt: new Date().toISOString(),
+    correlationId: randomUUID(),
+    data,
+  };
+  await new Promise<void>((resolve, reject) => {
+    ch.publish(
+      EXCHANGE,
+      routingKey,
+      Buffer.from(JSON.stringify(envelope)),
+      { persistent: true, contentType: "application/json" },
+      (err) => (err ? reject(err) : resolve()),
+    );
+  });
 }
 
 export interface PaymentSucceededOpts {
@@ -116,23 +139,26 @@ export interface PaymentSucceededOpts {
 
 // Publica un payment.succeeded real (sobre estándar del contrato) para el evento de prueba.
 export async function publishPaymentSucceeded(o: PaymentSucceededOpts): Promise<void> {
-  const ch = await getPublisher();
-  const envelope = {
-    messageId: o.messageId,
-    type: "payment.succeeded",
-    version: 1,
-    occurredAt: new Date().toISOString(),
-    correlationId: randomUUID(),
-    data: { orderId: o.orderId, holdId: o.holdId, eventId: TEST_EVENT, seatIds: o.seatIds },
-  };
-  await new Promise<void>((resolve, reject) => {
-    ch.publish(
-      EXCHANGE,
-      "payment.succeeded",
-      Buffer.from(JSON.stringify(envelope)),
-      { persistent: true, contentType: "application/json" },
-      (err) => (err ? reject(err) : resolve()),
-    );
+  await publishRaw("payment.succeeded", "payment.succeeded", o.messageId, {
+    orderId: o.orderId,
+    holdId: o.holdId,
+    eventId: TEST_EVENT,
+    seatIds: o.seatIds,
+  });
+}
+
+export interface PaymentFailedOpts {
+  messageId: string;
+  orderId: string;
+  holdId: string;
+}
+
+// Publica un payment.failed real. No lleva eventId ni seatIds: inventory los lee del hold en Redis.
+export async function publishPaymentFailed(o: PaymentFailedOpts): Promise<void> {
+  await publishRaw("payment.failed", "payment.failed", o.messageId, {
+    orderId: o.orderId,
+    holdId: o.holdId,
+    reason: "simulated",
   });
 }
 
@@ -187,8 +213,10 @@ export async function getSeat(seatId: string): Promise<{ status: string; order_i
 
 // Cierra las conexiones; si no, el proceso de test no termina.
 export async function closeConnections(): Promise<void> {
-  await pubCh?.close().catch(() => {});
-  await conn?.close().catch(() => {});
+  const ch = await pubPromise?.catch(() => null);
+  await ch?.close().catch(() => {});
+  const c = await connPromise?.catch(() => null);
+  await c?.close().catch(() => {});
   await redis.quit();
   await pool.end();
 }
