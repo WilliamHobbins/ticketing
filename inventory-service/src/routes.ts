@@ -2,8 +2,11 @@ import { Request, Router } from "express";
 import { ApiError } from "./errors";
 import { createHold, extendHold, getHold, releaseHold } from "./holds";
 import { listSeats } from "./seats";
+import { captureBase } from "./metrics";
 
 export const holdsRouter = Router();
+
+holdsRouter.use(captureBase);
 
 const MAX_SEATS_PER_HOLD = 10;
 // Solo letras, números, "_" y "-": evita caracteres raros al armar las claves de Redis.
@@ -58,6 +61,8 @@ holdsRouter.post("/:holdId/extend", async (req, res) => {
 });
 
 export const eventsRouter = Router();
+
+eventsRouter.use(captureBase);
 
 eventsRouter.get("/:eventId/seats", async (req, res) => {
   const eventId = String(req.params.eventId);
