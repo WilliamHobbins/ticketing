@@ -9,6 +9,7 @@ import { startConsumer } from "./consumer";
 import { startSweeper } from "./sweeper";
 import { startPaymentConsumers } from "./payments";
 import { httpMetrics, register } from "./metrics";
+import { requestLogger } from "./logger";
 
 const app = express();
 
@@ -21,6 +22,8 @@ app.use((req: Request, res: Response, next: NextFunction) => {
 });
 
 app.use(httpMetrics);
+
+app.use(requestLogger);
 
 app.use(express.json());
 
