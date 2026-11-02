@@ -8,6 +8,8 @@ import { redis } from "./redis";
 import { startConsumer } from "./consumer";
 import { startSweeper } from "./sweeper";
 import { startPaymentConsumers } from "./payments";
+import { httpMetrics, register } from "./metrics";
+import { errorMessage, logger, requestLogger } from "./logger";
 
 const app = express();
 
@@ -18,6 +20,10 @@ app.use((req: Request, res: Response, next: NextFunction) => {
   res.setHeader("X-Correlation-Id", correlationId);
   next();
 });
+
+app.use(httpMetrics);
+
+app.use(requestLogger);
 
 app.use(express.json());
 
@@ -44,6 +50,11 @@ app.get("/health", async (_req, res) => {
   });
 });
 
+app.get("/metrics", async (_req, res) => {
+  res.setHeader("Content-Type", register.contentType);
+  res.send(await register.metrics());
+});
+
 app.use("/api/v1/holds", holdsRouter);
 app.use("/api/v1/events", eventsRouter);
 
@@ -66,12 +77,16 @@ app.use((err: any, _req: Request, res: Response, _next: NextFunction) => {
   if (err?.type === "entity.too.large") {
     return res.status(413).json({ error: { code: "PAYLOAD_TOO_LARGE", message: "El body es demasiado grande" } });
   }
-  console.error("Unhandled error:", err);
+  logger.error("Unhandled error", {
+  correlationId: res.locals.correlationId as string,
+  error: errorMessage(err),
+  stack: err?.stack,
+});
   res.status(500).json({ error: { code: "INTERNAL_ERROR", message: "Error interno" } });
 });
 
 app.listen(config.port, () => {
-  console.log(`inventory-service listening on port ${config.port}`);
+  logger.info("inventory-service listening", { port: config.port });
   void startConsumer();
   void startSweeper();
   startPaymentConsumers();

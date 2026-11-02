@@ -1,6 +1,7 @@
 import { createHash, randomUUID } from "node:crypto";
 import amqp from "amqplib";
 import { config } from "./config";
+import { logger } from "./logger";
 
 const EXCHANGE = "ticketing.events";
 
@@ -16,12 +17,12 @@ function getChannel(): Promise<ConfirmCh> {
   if (!channelPromise) {
     const p = (async () => {
       const conn = await amqp.connect(config.brokerUrl);
-      conn.on("error", (err) => console.error("Publisher: error de conexión:", err.message));
+      conn.on("error", (err) => logger.error("Publisher: error de conexión", { error: err.message }));
       conn.on("close", () => {
         if (channelPromise === p) channelPromise = null;
       });
       const ch = await conn.createConfirmChannel();
-      ch.on("error", (err) => console.error("Publisher: error de canal:", err.message));
+      ch.on("error", (err) => logger.error("Publisher: error de canal", { error: err.message }));
       ch.on("close", () => {
         if (channelPromise === p) channelPromise = null;
       });

@@ -3,12 +3,11 @@ import { config } from "./config";
 import { EXPIRY_INDEX, holdKey } from "./holds";
 import { deterministicUuid, publishEvent } from "./publisher";
 import { redis } from "./redis";
+import { holdExpiredPublishErrorsTotal, holdsExpiredTotal } from "./metrics";
+import { errorMessage, logger } from "./logger";
 
 const LEASE_MS = 30_000; // tiempo que tiene un barrido para publicar antes de que otro reintente
 const BATCH = 100;
-
-// Contadores en memoria; en el paso 7 se exponen en /metrics.
-export const sweeperStats = { holdsExpired: 0, publishErrors: 0 };
 
 // Atómico: toma los holds vencidos y les corre el score hacia adelante (lease).
 // KEYS: [EXPIRY_INDEX]   ARGV: nowMs, leaseMs, limit
@@ -26,7 +25,7 @@ async function expireOne(holdId: string): Promise<void> {
   if (!h.expiresAt) {
     // No hay datos (se liberó a mano o se perdió): no hay nada que publicar.
     await redis.zrem(EXPIRY_INDEX, holdId);
-    console.warn(`Hold ${holdId} sin datos en Redis, se descarta del índice`);
+    logger.warn("Hold sin datos en Redis, se descarta del índice", { holdId });
     return;
   }
 
@@ -37,6 +36,8 @@ async function expireOne(holdId: string): Promise<void> {
     return;
   }
 
+  const correlationId = randomUUID(); // el barrido no nace de un request: correlationId nuevo
+  
   await publishEvent(
     "hold.expired",
     {
@@ -45,14 +46,14 @@ async function expireOne(holdId: string): Promise<void> {
       seatIds: JSON.parse(h.seatIds) as string[],
       userId: h.userId,
     },
-    randomUUID(), // el barrido no nace de un request: correlationId nuevo
+    correlationId,
     deterministicUuid(`hold.expired:${holdId}`),
   );
 
   // Recién ahora, con la publicación confirmada, sacamos el hold del índice.
   await redis.zrem(EXPIRY_INDEX, holdId);
-  sweeperStats.holdsExpired++;
-  console.log(`hold.expired publicado: ${holdId}`);
+  holdsExpiredTotal.inc();
+  logger.info("hold.expired publicado", { correlationId, holdId, eventId: h.eventId });
 }
 
 async function sweepOnce(): Promise<void> {
@@ -70,8 +71,8 @@ async function sweepOnce(): Promise<void> {
       await expireOne(holdId);
     } catch (err) {
       // Queda con el lease: en ~30 s vuelve a estar vencido y se reintenta solo.
-      sweeperStats.publishErrors++;
-      console.error(`No se pudo publicar hold.expired de ${holdId}:`, (err as Error).message);
+      holdExpiredPublishErrorsTotal.inc();
+      logger.error("No se pudo publicar hold.expired", { holdId, error: errorMessage(err) });
     }
   }
 }
@@ -82,11 +83,11 @@ export function startSweeper(): void {
     try {
       await sweepOnce();
     } catch (err) {
-      console.error("Error en el barrido:", (err as Error).message);
+      logger.error("Error en el barrido", { error: errorMessage(err) });
     } finally {
       setTimeout(run, config.sweepIntervalSeconds * 1000);
     }
   };
   void run();
-  console.log(`Barrido de holds cada ${config.sweepIntervalSeconds} s`);
+  logger.info("Barrido de holds iniciado", { everySeconds: config.sweepIntervalSeconds });
 }

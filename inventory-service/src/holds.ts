@@ -3,7 +3,7 @@ import { config } from "./config";
 import { ApiError } from "./errors";
 import { redis } from "./redis";
 import { pool } from "./db";
-
+import { holdsCreatedTotal } from "./metrics";
 
 
 // Claves en Redis:
@@ -151,6 +151,20 @@ export async function createHold(userId: string, eventId: string, seatIds: strin
       seatIds: conflicts.map((i) => seatIds[i - 1]),
     });
   }
+
+  // Una venta pudo confirmarse entre la consulta a Postgres y la reserva en Redis.
+  const sold = await pool.query(
+    "SELECT seat_id FROM seats WHERE event_id = $1 AND seat_id = ANY($2::text[]) AND status = 'SOLD'",
+    [eventId, seatIds],
+  );
+
+  if (sold.rows.length > 0) {
+    await releaseHoldKeys(holdId, eventId, seatIds);
+    throw new ApiError(409, "SEAT_UNAVAILABLE", "Uno o más asientos no están disponibles", {
+      seatIds: sold.rows.map((r) => r.seat_id as string),
+    });
+  }
+  holdsCreatedTotal.inc();
   return { holdId, eventId, seatIds, expiresAt: new Date(expiresAtMs).toISOString() };
 }
 

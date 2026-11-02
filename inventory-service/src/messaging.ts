@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import amqp, { ConsumeMessage } from "amqplib";
 import { config } from "./config";
+import { errorMessage, logger } from "./logger";
 
 export const EXCHANGE = "ticketing.events";
 const DLX = "ticketing.events.dlx";
@@ -33,6 +34,15 @@ export function parseEnvelope(msg: ConsumeMessage, expectedType: string): Envelo
   return { messageId: body.messageId, type: body.type, correlationId, data: body.data };
 }
 
+function correlationOf(msg: ConsumeMessage): string | undefined {
+  try {
+    const id = JSON.parse(msg.content.toString("utf8"))?.correlationId;
+    return typeof id === "string" && id !== "" ? id : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
 interface ConsumerOptions {
   queue: string;
   routingKey: string;
@@ -43,14 +53,14 @@ interface ConsumerOptions {
 async function runConsumer({ queue, routingKey, handler }: ConsumerOptions): Promise<void> {
   const dlq = `${queue}.dlq`;
   const conn = await amqp.connect(config.brokerUrl);
-  conn.on("error", (err) => console.error(`RabbitMQ connection error (${queue}):`, err.message));
+  conn.on("error", (err) => logger.error("RabbitMQ connection error", { queue, error: err.message }));
 
   try {
     const ch = await conn.createChannel();
-    ch.on("error", (err) => console.error(`RabbitMQ channel error (${queue}):`, err.message));
+    ch.on("error", (err) => logger.error("RabbitMQ channel error", { queue, error: err.message }));
 
     await ch.assertExchange(EXCHANGE, "topic", { durable: true });
-    await ch.assertExchange(DLX, "direct", { durable: true });
+    await ch.assertExchange(DLX, "topic", { durable: true });
     await ch.assertQueue(dlq, { durable: true });
     await ch.bindQueue(dlq, DLX, queue);
     await ch.assertQueue(queue, {
@@ -64,15 +74,15 @@ async function runConsumer({ queue, routingKey, handler }: ConsumerOptions): Pro
       if (!msg) return;
       try {
         const result = await handler(msg);
-        console.log(`${routingKey} ${result}`);
+        logger.info("mensaje procesado", { correlationId: correlationOf(msg), queue, routingKey, result });
         ch.ack(msg);
       } catch (err) {
         try {
           if (err instanceof InvalidMessage) {
-            console.error(`Mensaje inválido en ${queue}, va a la DLQ:`, err.message);
+            logger.error("Mensaje inválido, va a la DLQ", { correlationId: correlationOf(msg), queue, error: err.message });
             ch.nack(msg, false, false); // requeue=false -> dead-letter
           } else {
-            console.error(`Error procesando ${routingKey}, se reintenta:`, err);
+            logger.error("Error procesando mensaje, se reintenta", { correlationId: correlationOf(msg), queue, routingKey, error: errorMessage(err) });
             setTimeout(() => {
               try {
                 ch.nack(msg, false, true); // requeue=true
@@ -87,7 +97,7 @@ async function runConsumer({ queue, routingKey, handler }: ConsumerOptions): Pro
       }
     });
 
-    console.log(`Consumidor escuchando la cola ${queue}`);
+    logger.info("Consumidor escuchando", { queue });
     // Esperamos a que se cierre la conexión o el canal.
     await new Promise<void>((resolve) => {
       conn.on("close", () => resolve());
@@ -104,7 +114,7 @@ export async function startQueueConsumer(options: ConsumerOptions): Promise<void
     try {
       await runConsumer(options);
     } catch (err) {
-      console.error(`No se pudo consumir ${options.queue}:`, (err as Error).message);
+      logger.error("No se pudo consumir, se reintenta en 5 s", { queue: options.queue, error: errorMessage(err) });
     }
     await new Promise((r) => setTimeout(r, 5000));
   }
