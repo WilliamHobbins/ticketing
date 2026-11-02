@@ -16,5 +16,5 @@ COPY package*.json ./
 RUN npm ci --omit=dev
 COPY --from=build /app/dist ./dist
 COPY --from=build /app/db ./db
-EXPOSE 8083
+EXPOSE 3003
 CMD ["sh", "-c", "node dist/migrate.js && node dist/index.js"]

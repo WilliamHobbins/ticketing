@@ -17,7 +17,7 @@ function requiredFromEnv(name: string): string {
 }
 
 export const config = {
-  port: intFromEnv("PORT", 8083),
+  port: intFromEnv("PORT", 3003),
   databaseUrl: requiredFromEnv("DATABASE_URL"),
   brokerUrl: requiredFromEnv("BROKER_URL"),
   redisUrl: process.env.REDIS_URL ?? "redis://localhost:6379",
