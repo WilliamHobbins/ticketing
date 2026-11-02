@@ -50,7 +50,7 @@ async function runConsumer({ queue, routingKey, handler }: ConsumerOptions): Pro
     ch.on("error", (err) => console.error(`RabbitMQ channel error (${queue}):`, err.message));
 
     await ch.assertExchange(EXCHANGE, "topic", { durable: true });
-    await ch.assertExchange(DLX, "direct", { durable: true });
+    await ch.assertExchange(DLX, "topic", { durable: true });
     await ch.assertQueue(dlq, { durable: true });
     await ch.bindQueue(dlq, DLX, queue);
     await ch.assertQueue(queue, {

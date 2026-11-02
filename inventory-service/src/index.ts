@@ -9,6 +9,8 @@ import { startConsumer } from "./consumer";
 import { startSweeper } from "./sweeper";
 import { startPaymentConsumers } from "./payments";
 
+import { register, httpRequestsTotal, httpRequestDuration } from "./metrics";
+
 const app = express();
 
 // X-Correlation-Id: si viene, lo reutilizamos; si no, lo generamos. Siempre se devuelve.
@@ -16,6 +18,30 @@ app.use((req: Request, res: Response, next: NextFunction) => {
   const correlationId = req.header("X-Correlation-Id") || randomUUID();
   res.locals.correlationId = correlationId;
   res.setHeader("X-Correlation-Id", correlationId);
+  next();
+});
+
+// Registra cantidad y duración de cada request HTTP.
+app.use((req: Request, res: Response, next: NextFunction) => {
+  const endTimer = httpRequestDuration.startTimer();
+
+  res.on("finish", () => {
+    // Usamos la ruta registrada por Express para evitar etiquetas
+    // con valores variables, como IDs incluidos en las URLs.
+    const route = req.route?.path
+      ? `${req.baseUrl}${req.route.path}`
+      : "unmatched";
+
+    const labels = {
+      method: req.method,
+      route,
+      status: String(res.statusCode),
+    };
+
+    httpRequestsTotal.inc(labels);
+    endTimer(labels);
+  });
+
   next();
 });
 
@@ -42,6 +68,12 @@ app.get("/health", async (_req, res) => {
     postgres,
     redis: redisStatus,
   });
+});
+
+// Endpoint de métricas para Prometheus.
+app.get("/metrics", async (_req, res) => {
+  res.setHeader("Content-Type", register.contentType);
+  res.send(await register.metrics());
 });
 
 app.use("/api/v1/holds", holdsRouter);
