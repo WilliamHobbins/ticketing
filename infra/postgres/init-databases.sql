@@ -3,3 +3,4 @@
 CREATE DATABASE ticketing_catalog;
 CREATE DATABASE ticketing_inventory;
 CREATE DATABASE ticketing_orders;
+CREATE DATABASE ticketing_tickets;
