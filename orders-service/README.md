@@ -34,7 +34,7 @@ docker compose exec postgres psql -U ticketing -d ticketing_users -c "CREATE DAT
       PORT: 3004
       DATABASE_URL: postgres://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/ticketing_orders
       BROKER_URL: amqp://${RABBITMQ_USER}:${RABBITMQ_PASSWORD}@rabbitmq:5672
-      INVENTORY_URL: ${INVENTORY_URL:-http://inventory-service:3003}
+      INVENTORY_URL: ${INVENTORY_URL:-http://inventory-service:8083}
       EVENTS_EXCHANGE: ticketing.events
       LOG_LEVEL: ${LOG_LEVEL:-info}
     depends_on:
@@ -52,7 +52,7 @@ docker compose exec postgres psql -U ticketing -d ticketing_users -c "CREATE DAT
       start_period: 15s
     restart: unless-stopped
 ```
-`INVENTORY_URL` asume que Lucas usa el puerto 3003 (mismo estilo que users en 3001); confirmar con él.
+   `INVENTORY_URL` apunta al inventory-service en el puerto 8083, según el contrato.
 Si la password de Postgres o RabbitMQ tiene caracteres especiales (`@`, `:`, `/`), hay que codificarlos en la URL.
 
 ### 3. Prometheus (`infra/prometheus/prometheus.yml`)
