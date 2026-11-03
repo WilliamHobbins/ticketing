@@ -31,9 +31,33 @@ paths:
           content:
             application/json:
               schema: { $ref: "#/components/schemas/Order" }
-        "404": { $ref: "#/components/responses/Error" }
+        "400":
+          description: INVALID_REQUEST o INVALID_JSON
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "401":
+          description: UNAUTHORIZED, falta o es inválido X-User-Id
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "403":
+          description: HOLD_NOT_OWNED, el hold es de otro usuario
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "404":
+          description: HOLD_NOT_FOUND, el hold no existe
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
         "410":
           description: HOLD_EXPIRED, el hold ya venció
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "502":
+          description: INVENTORY_UNAVAILABLE, INVENTORY_ERROR o INVENTORY_BAD_RESPONSE
           content:
             application/json:
               schema: { $ref: "#/components/schemas/Error" }
@@ -91,9 +115,31 @@ paths:
                 properties:
                   orderId: { type: string, format: uuid }
                   status: { type: string, enum: [PAID, PAYMENT_FAILED, EXPIRED] }
-        "404": { $ref: "#/components/responses/Error" }
-        "410": { $ref: "#/components/responses/Error" }
-        "422": { $ref: "#/components/responses/Error" }
+        "400":
+          description: IDEMPOTENCY_KEY_REQUIRED o INVALID_REQUEST
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "404":
+          description: ORDER_NOT_FOUND
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "409":
+          description: PAYMENT_IN_PROGRESS u ORDER_NOT_PENDING
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "410":
+          description: HOLD_EXPIRED, el hold venció antes de pagar (el pedido pasa a EXPIRED)
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "422":
+          description: IDEMPOTENCY_KEY_REUSED, la clave ya se usó con otra solicitud
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
   /orders/{orderId}/tickets:
     get:
       summary: Entradas emitidas del pedido (vacío hasta que el notifier las emita)
