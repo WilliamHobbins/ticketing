@@ -1,0 +1,26 @@
+/* Colores del plano: seleccionado en verde, no disponible en rojo. Se apoyan en .layout para ganarle a styles.css. */
+.layout .seat.on,
+.layout .seat.on:hover:not(:disabled) { background: #1f9d55; border-color: #1f9d55; color: #fff; }
+
+.layout .seat.sold,
+.layout .seat.held {
+    background: #e5484d; border: 1.5px solid #c0272d; border-style: solid; color: transparent; cursor: not-allowed;
+}
+
+/* Leyenda */
+.legend i.lg-on { background: #1f9d55; border-color: #1f9d55; }
+.legend i.lg-off { background: #e5484d; border-color: #c0272d; }
+.legend .na { color: #c0272d; font-weight: 700; }
+
+/* Plano en herradura / sala: posiciones absolutas */
+.sm-wrap { overflow-x: auto; margin-bottom: 8px; }
+.sm { position: relative; transform-origin: 0 0; }
+.sm .seat { position: absolute; width: 26px; height: 26px; font-size: 10px; }
+.sm-stage {
+    position: absolute; display: flex; align-items: center; justify-content: center;
+    background: var(--ink, #15181f); color: #fff; font-size: 14px; border-radius: 4px 4px 40px 40px;
+}
+.sm-stage--bottom { border-radius: 40px 40px 4px 4px; }
+.sm-label { position: absolute; transform: translateX(-50%); text-align: center; white-space: nowrap; line-height: 1.25; height: 38px; }
+.sm-label b { display: block; font-size: 16px; }
+.sm-label span { font-size: 13px; color: var(--mute, #646a7a); }

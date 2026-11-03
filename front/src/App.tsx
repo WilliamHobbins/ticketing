@@ -1,9 +1,13 @@
 import { useEffect, useState } from 'react';
 import Account from './Account';
 import AuthView from './AuthView';
+import Checkout from './Checkout';
 import EventList from './EventList';
 import EventView from './EventView';
+import OrderDetail from './Orderdetail';
+import OrdersList from './Orderslist';
 import './auth.css';
+import './orders.css';
 
 const useHash = () => {
   const [hash, setHash] = useState(location.hash);
@@ -28,10 +32,21 @@ export default function App() {
   const [path, query = ''] = hash.replace(/^#/, '').split('?');
   const next = new URLSearchParams(query).get('next') || '/';
   const event = path.match(/^\/event\/([\w-]+)/);
+  const checkout = path.match(/^\/checkout\/([\w-]+)/);
+  const order = path.match(/^\/orders\/([\w-]+)/);
+  const needsAuth = !!checkout || !!order || path === '/orders';
 
   let view;
   if (event) {
     view = <EventView key={event[1]} id={event[1]} token={token} setToken={saveToken} />;
+  } else if (needsAuth && !token) {
+    view = <AuthView key="login-required" mode="login" next={path} setToken={saveToken} />;
+  } else if (checkout) {
+    view = <Checkout key={checkout[1]} id={checkout[1]} token={token} setToken={saveToken} />;
+  } else if (order) {
+    view = <OrderDetail key={order[1]} id={order[1]} token={token} setToken={saveToken} />;
+  } else if (path === '/orders') {
+    view = <OrdersList token={token} setToken={saveToken} />;
   } else if (path === '/login' || path === '/register' || path === '/account') {
     view = token
         ? <Account token={token} setToken={saveToken} />
@@ -48,6 +63,7 @@ export default function App() {
           <span className="nav">
           {token ? (
               <>
+                <a className="nav-link" href="#/orders">Mis pedidos</a>
                 <a className="nav-link" href="#/account">Mi cuenta</a>
                 <button className="nav-btn" onClick={() => saveToken(null)}>Salir</button>
               </>

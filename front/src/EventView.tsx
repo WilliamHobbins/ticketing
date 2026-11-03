@@ -1,6 +1,7 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { get, money, time, MAX_SEATS } from './api';
+import { useCallback, useEffect, useRef, useState } from 'react';
+import { get, money, time, MAX_SEATS, ApiErr, authHeaders as headers, call, ORDERS_API } from './api';
 import type { EventSummary } from './types';
+import SeatMap from './SeatMap';
 
 /* ------------------------------------------------------------------ */
 /* Contrato con inventory-service (vía gateway: /api/v1/...)           */
@@ -9,10 +10,6 @@ import type { EventSummary } from './types';
 // Prefijo con el que el gateway expone inventory (holds y asientos). Ajustar si el gateway usa otro,
 // por ejemplo '/api/v1/inventory'. Catalog usa '/api/v1/catalog' (ver api.ts).
 const INV_API = '/api/v1';
-// Prefijo de orders.
-const ORDERS_API = '/api/v1';
-// Solo para desarrollo directo contra inventory (sin gateway): VITE_DEV_USER_ID=user-1
-const DEV_USER_ID: string | undefined = (import.meta as any).env?.VITE_DEV_USER_ID;
 
 /** Respuesta de GET /events/{eventId}/seats */
 interface InvSeat {
@@ -41,8 +38,6 @@ interface Hold {
   expiresAtMs: number;
 }
 
-interface Done { demo: boolean; count: number; total: number }
-
 const toSeat = (s: InvSeat): Seat => ({
   id: s.seatId,
   sector: s.sector,
@@ -51,26 +46,6 @@ const toSeat = (s: InvSeat): Seat => ({
   price: s.price,
   status: s.status === 'SOLD' ? 'sold' : s.status === 'HELD' ? 'held' : 'available',
 });
-
-/** Error con el formato { error: { code, message, details } } de inventory */
-class ApiErr extends Error {
-  constructor(
-      public status: number,
-      public code: string,
-      message: string,
-      public details?: { seatIds?: string[] },
-  ) {
-    super(message);
-  }
-}
-
-function headers(token: string | null, json = false): Record<string, string> {
-  const h: Record<string, string> = {};
-  if (json) h['Content-Type'] = 'application/json';
-  if (token) h.Authorization = 'Bearer ' + token;
-  if (DEV_USER_ID) h['X-User-Id'] = DEV_USER_ID;
-  return h;
-}
 
 async function inv<T = void>(
     method: 'GET' | 'POST' | 'DELETE',
@@ -114,7 +89,6 @@ export default function EventView({ id, token, setToken }: Props) {
   const [now, setNow] = useState(Date.now());
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState('');
-  const [done, setDone] = useState<Done | null>(null);
 
   const pendingKey = 'pendingSeats:' + id;
 
@@ -154,7 +128,7 @@ export default function EventView({ id, token, setToken }: Props) {
 
   /* Mientras no hay hold, refresca el mapa cada 15 s para ver holds ajenos que vencen */
   useEffect(() => {
-    if (hold || done) return;
+    if (hold) return;
     const t = setInterval(() => {
       refreshSeats()
           .then((list) =>
@@ -168,7 +142,7 @@ export default function EventView({ id, token, setToken }: Props) {
           .catch(() => { /* se reintenta en el próximo ciclo */ });
     }, 15000);
     return () => clearInterval(t);
-  }, [hold, done, refreshSeats]);
+  }, [hold, refreshSeats]);
 
   /* Cuenta regresiva del hold */
   useEffect(() => {
@@ -203,18 +177,6 @@ export default function EventView({ id, token, setToken }: Props) {
       release();
     };
   }, []);
-
-  /* sector -> fila -> asientos */
-  const bySector = useMemo(() => {
-    const out = new Map<string, Map<string, Seat[]>>();
-    for (const s of seats) {
-      const rows = out.get(s.sector) ?? new Map<string, Seat[]>();
-      const row = String(s.row);
-      rows.set(row, [...(rows.get(row) ?? []), s]);
-      out.set(s.sector, rows);
-    }
-    return out;
-  }, [seats]);
 
   const items = [...sel.values()];
   const total = items.reduce((a, s) => a + s.price, 0);
@@ -272,6 +234,7 @@ export default function EventView({ id, token, setToken }: Props) {
         setMessage('Tu reserva venció. Elegí los asientos de nuevo.');
         return;
       case 'FORBIDDEN':
+      case 'HOLD_NOT_OWNED':
         setMessage('Esta reserva pertenece a otra cuenta.');
         return;
       case 'EVENT_NOT_FOUND':
@@ -333,39 +296,22 @@ export default function EventView({ id, token, setToken }: Props) {
     }
   }
 
-  /* 4) Pagar: crea el pedido en orders con el holdId */
+  /* 4) Comprar: crea el pedido en orders (solo con el holdId) y pasa al checkout, donde se paga */
   async function buy() {
     if (!hold) return;
     setBusy(true);
     setMessage('');
-    const ids = hold.seatIds;
-    let demo = false;
     try {
-      const r = await fetch(ORDERS_API + '/orders', {
-        method: 'POST',
-        headers: headers(token, true),
-        body: JSON.stringify({ eventId: id, seatIds: ids, holdId: hold.holdId }),
-      });
-      if ([404, 502, 503].includes(r.status)) demo = true; // pedidos aún no desplegado: modo demo
-      else if (r.status === 401) {
-        setToken(null);
-        goToLogin();
-        return;
-      } else if (r.status === 410) {
-        handleError(new ApiErr(410, 'HOLD_EXPIRED', ''));
-        return;
-      } else if (!r.ok) {
-        setMessage('No se pudo completar la compra (' + r.status + '). Tu reserva sigue activa mientras haya tiempo.');
-        return;
-      }
-    } catch { demo = true; }
-    finally { setBusy(false); }
-
-    setSeats((prev) => prev.map((s) => (ids.includes(s.id) ? { ...s, status: 'sold' } : s)));
-    setDone({ demo, count: ids.length, total: hold.total });
-    holdRef.current = null; // la compra se hizo: no liberar al salir
-    setHold(null);
-    setSel(new Map());
+      const order = await call<{ orderId: string }>('POST', ORDERS_API, token, { holdId: hold.holdId });
+      // El checkout no recibe la expiración del hold por la API: se la pasamos por sessionStorage.
+      try { sessionStorage.setItem('holdExpires:' + order.orderId, String(hold.expiresAtMs)); } catch { /* ignorar */ }
+      holdRef.current = null; // el hold ya es del pedido: no liberarlo al salir de esta pantalla
+      location.hash = '#/checkout/' + order.orderId;
+    } catch (e) {
+      handleError(e);
+    } finally {
+      setBusy(false);
+    }
   }
 
   if (failed)
@@ -386,59 +332,13 @@ export default function EventView({ id, token, setToken }: Props) {
           <div>
             <div className="legend">
               <span><i />Libre</span>
-              <span><i style={{ background: 'var(--cobalt)', borderColor: 'var(--cobalt)' }} />Tu selección</span>
-              <span><i className="held" />Reservado por otra persona</span>
-              <span><i style={{ borderColor: 'var(--sold)' }} />Vendido</span>
+              <span><i className="lg-on" />Tu selección</span>
+              <span className="na"><i className="lg-off" />No disponible</span>
             </div>
-            <div className="stage">Escenario</div>
-            {[...bySector].map(([name, rows]) => (
-                <section className="sector" key={name}>
-                  <h3>
-                    <span>{name}</span>
-                    <span className="muted">{money([...rows.values()][0][0].price)} por entrada</span>
-                  </h3>
-                  {[...rows].map(([row, list]) => (
-                      <div className="srow" key={row}>
-                        <span className="rl">{row}</span>
-                        <div className="seats">
-                          {list.map((s) => {
-                            const on = sel.has(s.id);
-                            const unavailable = s.status !== 'available' && !on;
-                            const label = on
-                                ? 'tu selección'
-                                : s.status === 'sold' ? 'vendido'
-                                    : s.status === 'held' ? 'reservado por otra persona'
-                                        : money(s.price);
-                            return (
-                                <button
-                                    key={s.id}
-                                    className={`seat${s.status === 'sold' ? ' sold' : ''}${s.status === 'held' && !on ? ' held' : ''}${on ? ' on' : ''}`}
-                                    disabled={unavailable || locked || busy}
-                                    aria-pressed={on}
-                                    aria-label={`${name}, fila ${row}, asiento ${s.number}, ${label}`}
-                                    onClick={() => toggle(s)}
-                                >
-                                  {s.number}
-                                </button>
-                            );
-                          })}
-                        </div>
-                      </div>
-                  ))}
-                </section>
-            ))}
+            <SeatMap venue={ev.venueName} seats={seats} sel={sel} disabled={locked || busy} onToggle={toggle} />
           </div>
 
-          {done ? (
-              <aside className="ok">
-                <h3>Compra confirmada</h3>
-                <p>{done.count} entrada{done.count > 1 ? 's' : ''} por {money(done.total)}.</p>
-                {done.demo && (
-                    <p className="muted">Compra simulada: el servicio de pedidos todavía no está disponible en este entorno.</p>
-                )}
-                <a className="back" href="#/">Ver más eventos</a>
-              </aside>
-          ) : hold ? (
+          {hold ? (
               <aside>
                 <h3>Reserva activa</h3>
                 <p className="muted" role="timer" aria-live="off">
