@@ -1,0 +1,72 @@
+/* Pedidos. Usa los tokens de styles.css (--cobalt, --ink, --paper, --line, --white, --mute). */
+.ord { max-width: 680px; font-size: 18px; }
+.ord .muted { font-size: 17px; }
+.ord-h { margin: 32px 0 14px; font-size: 24px; }
+
+/* Tarjetas de resumen (checkout y detalle) */
+.ord-card, .ord-hero {
+    background: var(--white, #fff); border-radius: 14px; padding: 22px 26px; margin: 16px 0 20px;
+}
+.ord-card h3 { margin: 0 0 14px; font-size: 24px; letter-spacing: -.02em; }
+.ord-card p, .ord-hero p { margin: 0 0 14px; }
+.ord-venue { font-size: 24px; font-weight: 700; letter-spacing: -.02em; line-height: 1.2; }
+.ord-when { font-size: 20px; }
+.ord-lead { font-size: 22px; line-height: 1.4; margin: 0 0 22px; }
+.ord-meta { color: var(--mute, #646a7a); font-size: 17px; }
+.ord .total { font-size: 20px; margin: 14px 0 0; }
+.ord-dev { display: flex; gap: 8px; align-items: center; margin: 12px 0; font-size: 16px; }
+
+/* Lista de pedidos */
+.ord-list { list-style: none; margin: 0; padding: 0; }
+.ord-row {
+    display: flex; justify-content: space-between; align-items: center; gap: 16px; flex-wrap: wrap;
+    padding: 18px 0; border-bottom: 1px solid var(--line, #cdd1da); color: inherit; text-decoration: none;
+}
+.ord-row:hover b:first-child, .ord-row:focus-visible b:first-child { text-decoration: underline; }
+.ord-row-end { display: flex; gap: 14px; align-items: center; }
+
+/* Estado */
+.badge { display: inline-flex; align-items: center; gap: 7px; font-size: 15px; padding: 3px 12px;
+    border: 1px solid var(--line, #cdd1da); background: var(--white, #fff); border-radius: 999px; white-space: nowrap; }
+.badge::before { content: ''; width: 9px; height: 9px; border-radius: 50%; background: #8a8a8a; }
+.badge--paid::before { background: #1f9d55; }
+.badge--pending-payment::before { background: var(--cobalt, #2a3fe8); }
+.badge--payment-failed::before { background: #d64545; }
+
+/* Entradas individuales: cuerpo + talón con muescas */
+.tickets { list-style: none; margin: 0; padding: 0; display: grid; gap: 18px; }
+.ticket {
+    display: grid; grid-template-columns: 1fr auto; background: var(--white, #fff);
+    border-radius: 14px; overflow: hidden; border: 1px solid var(--line, #cdd1da);
+}
+.ticket-main { display: flex; flex-direction: column; gap: 12px; padding: 22px 26px; }
+.ticket-title { font-size: 24px; font-weight: 800; letter-spacing: -.025em; line-height: 1.15; margin-bottom: 4px; }
+.ticket-main span { font-size: 18px; }
+.ticket-stub {
+    position: relative; display: flex; flex-direction: column; justify-content: center; gap: 2px;
+    min-width: 200px; padding: 22px 26px; background: var(--cobalt, #2a3fe8); color: #fff;
+    border-left: 2px dashed rgba(255, 255, 255, .55);
+}
+.ticket-stub span { font-size: 15px; opacity: .85; }
+.ticket-stub b { font-size: 26px; letter-spacing: -.02em; line-height: 1.1; margin-bottom: 8px; }
+.ticket-stub code { font-size: 20px; letter-spacing: .06em; font-weight: 700; word-break: break-all; }
+.ticket-stub::before, .ticket-stub::after {
+    content: ''; position: absolute; left: -11px; width: 20px; height: 20px; border-radius: 50%;
+    background: var(--paper, #edeff2);
+}
+.ticket-stub::before { top: -10px; }
+.ticket-stub::after { bottom: -10px; }
+.ticket--void { opacity: .55; }
+.ticket--void .ticket-stub code { text-decoration: line-through; }
+
+@media (max-width: 560px) {
+    .ticket { grid-template-columns: 1fr; }
+    .ticket-stub { border-left: 0; border-top: 2px dashed rgba(255, 255, 255, .55); min-width: 0; }
+    .ticket-stub::before, .ticket-stub::after { top: -11px; bottom: auto; left: -10px; }
+    .ticket-stub::after { left: auto; right: -10px; }
+}
+
+/* Compatibilidad con styles.css global */
+.ord a.btn { display: block; text-align: center; text-decoration: none; }  /* .btn es width:100% y estaba pensado para <button> */
+.ord .btn { max-width: 360px; }
+.ord-dev input { width: auto; margin: 0; }                                   /* el selector global "input" lo estiraba al 100% */
