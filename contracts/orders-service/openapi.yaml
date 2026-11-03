@@ -1,0 +1,172 @@
+openapi: 3.0.3
+info:
+  title: orders-service
+  version: 1.0.0
+  description: >
+    Pedidos y pagos simulados. Crea el pedido desde un hold del inventory,
+    procesa el pago con idempotencia y guarda las entradas emitidas por el notifier.
+servers:
+  - url: http://localhost:8080/api/v1
+    description: A través del gateway
+  - url: http://localhost:3004/api/v1
+    description: Directo (solo desarrollo)
+security:
+  - bearerAuth: []
+paths:
+  /orders:
+    post:
+      summary: Crear un pedido a partir de un hold
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [holdId]
+              properties:
+                holdId: { type: string, format: uuid }
+      responses:
+        "201":
+          description: Pedido creado en PENDING_PAYMENT
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Order" }
+        "404": { $ref: "#/components/responses/Error" }
+        "410":
+          description: HOLD_EXPIRED, el hold ya venció
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+    get:
+      summary: Listar los pedidos del usuario
+      responses:
+        "200":
+          description: Pedidos del usuario
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: "#/components/schemas/Order" }
+  /orders/{orderId}:
+    get:
+      summary: Obtener un pedido
+      parameters:
+        - $ref: "#/components/parameters/OrderId"
+      responses:
+        "200":
+          description: El pedido
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Order" }
+        "404": { $ref: "#/components/responses/Error" }
+  /orders/{orderId}/pay:
+    post:
+      summary: Pagar un pedido (pago simulado, idempotente)
+      description: >
+        La misma Idempotency-Key devuelve la misma respuesta sin volver a cobrar.
+        Reusar la clave con otro cuerpo da 422.
+      parameters:
+        - $ref: "#/components/parameters/OrderId"
+        - name: Idempotency-Key
+          in: header
+          required: true
+          schema: { type: string }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [method, simulate]
+              properties:
+                method: { type: string, enum: [mock] }
+                simulate: { type: string, enum: [success, fail] }
+      responses:
+        "200":
+          description: Resultado del pago
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  orderId: { type: string, format: uuid }
+                  status: { type: string, enum: [PAID, PAYMENT_FAILED, EXPIRED] }
+        "404": { $ref: "#/components/responses/Error" }
+        "410": { $ref: "#/components/responses/Error" }
+        "422": { $ref: "#/components/responses/Error" }
+  /orders/{orderId}/tickets:
+    get:
+      summary: Entradas emitidas del pedido (vacío hasta que el notifier las emita)
+      parameters:
+        - $ref: "#/components/parameters/OrderId"
+      responses:
+        "200":
+          description: Lista de entradas
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: "#/components/schemas/Ticket" }
+        "404": { $ref: "#/components/responses/Error" }
+  /health:
+    get:
+      summary: Estado del servicio
+      security: []
+      responses:
+        "200": { description: OK }
+  /metrics:
+    get:
+      summary: Métricas en formato Prometheus
+      security: []
+      responses:
+        "200": { description: Texto Prometheus }
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+      description: Lo valida el gateway, que reenvía X-User-Id y X-User-Email.
+  parameters:
+    OrderId:
+      name: orderId
+      in: path
+      required: true
+      schema: { type: string, format: uuid }
+  responses:
+    Error:
+      description: Error uniforme
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Error" }
+  schemas:
+    Error:
+      type: object
+      properties:
+        error:
+          type: object
+          properties:
+            code: { type: string }
+            message: { type: string }
+    Order:
+      type: object
+      properties:
+        orderId: { type: string, format: uuid }
+        eventId: { type: string }
+        holdId: { type: string, format: uuid }
+        status:
+          type: string
+          enum: [PENDING_PAYMENT, PAID, PAYMENT_FAILED, EXPIRED, REFUNDED]
+        total: { type: number }
+        seatIds:
+          type: array
+          items: { type: string }
+        createdAt: { type: string, format: date-time }
+        updatedAt: { type: string, format: date-time }
+    Ticket:
+      type: object
+      properties:
+        ticketId: { type: string, format: uuid }
+        seatId: { type: string }
+        code: { type: string }
+        status: { type: string, enum: [VALID, VOIDED] }
