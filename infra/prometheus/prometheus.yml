@@ -27,3 +27,8 @@ scrape_configs:
     metrics_path: /metrics
     static_configs:
        - targets: ["orders-service:3004"]
+    
+  - job_name: "notifier-worker"
+    metrics_path: /metrics
+    static_configs:
+        - targets: ["notifier-worker:3005"]
