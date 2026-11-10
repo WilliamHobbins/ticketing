@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { ApiErr, call, dateTime, get, money, ORDERS_API } from './api';
-import { StatusBadge } from './OrderBadge';
+import { StatusBadge } from './Orderbadge';
 import type { EventSummary, Order } from './types';
 
 interface Props {

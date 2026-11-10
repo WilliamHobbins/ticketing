@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { get, money, time, MAX_SEATS, ApiErr, authHeaders as headers, call, ORDERS_API } from './api';
 import type { EventSummary } from './types';
-import SeatMap from './SeatMap';
+import SeatMap from './Seatmap';
 
 /* ------------------------------------------------------------------ */
 /* Contrato con inventory-service (vía gateway: /api/v1/...)           */
