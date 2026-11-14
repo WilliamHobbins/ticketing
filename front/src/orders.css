@@ -12,7 +12,8 @@
 .ord-venue { font-size: 24px; font-weight: 700; letter-spacing: -.02em; line-height: 1.2; }
 .ord-when { font-size: 20px; }
 .ord-lead { font-size: 22px; line-height: 1.4; margin: 0 0 22px; }
-.ord-meta { color: var(--mute, #646a7a); font-size: 17px; }
+.ord-meta { color: #1c2130; font-weight: 500; font-size: 17px; }
+.ord-dev { color: var(--ink, #15181f); font-weight: 500; }
 .ord .total { font-size: 20px; margin: 14px 0 0; }
 .ord-dev { display: flex; gap: 8px; align-items: center; margin: 12px 0; font-size: 16px; }
 
@@ -22,7 +23,9 @@
     display: flex; justify-content: space-between; align-items: center; gap: 16px; flex-wrap: wrap;
     padding: 18px 0; border-bottom: 1px solid var(--line, #cdd1da); color: inherit; text-decoration: none;
 }
-.ord-row:hover b:first-child, .ord-row:focus-visible b:first-child { text-decoration: underline; }
+.ord-row { color: var(--ink, #15181f); font-weight: 500; transition: color .15s; }
+.ord .ord-row:hover, .ord .ord-row:hover *,
+.ord .ord-row:focus-visible, .ord .ord-row:focus-visible * { color: var(--cobalt, #2a3fe8); }
 .ord-row-end { display: flex; gap: 14px; align-items: center; }
 
 /* Estado */

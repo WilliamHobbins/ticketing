@@ -314,6 +314,14 @@ export default function EventView({ id, token, setToken }: Props) {
     }
   }
 
+  const legend = (
+      <div className="legend">
+        <span><i />Libre</span>
+        <span><i className="lg-on" />Tu selección</span>
+        <span className="na"><i className="lg-off" />No disponible</span>
+      </div>
+  );
+
   if (failed)
     return (<><h1>No se pudo cargar el evento</h1><p><a href="#/">Volver a los eventos</a></p></>);
   if (!ev) return <p className="muted">Cargando mapa de asientos…</p>;
@@ -330,16 +338,12 @@ export default function EventView({ id, token, setToken }: Props) {
         </p>
         <div className="layout">
           <div>
-            <div className="legend">
-              <span><i />Libre</span>
-              <span><i className="lg-on" />Tu selección</span>
-              <span className="na"><i className="lg-off" />No disponible</span>
-            </div>
             <SeatMap venue={ev.venueName} seats={seats} sel={sel} disabled={locked || busy} onToggle={toggle} />
           </div>
 
           {hold ? (
               <aside>
+                {legend}
                 <h3>Reserva activa</h3>
                 <p className="muted" role="timer" aria-live="off">
                   Tenés <b>{clock(remaining)}</b> para completar la compra.
@@ -362,6 +366,7 @@ export default function EventView({ id, token, setToken }: Props) {
               </aside>
           ) : (
               <aside>
+                {legend}
                 <h3>Tu selección</h3>
                 {items.length ? (
                     <>

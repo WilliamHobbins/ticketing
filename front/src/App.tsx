@@ -25,7 +25,7 @@ export default function App() {
 
   const saveToken = (t: string | null) => {
     if (t) sessionStorage.setItem('token', t);
-    else sessionStorage.removeItem('token');
+    else { sessionStorage.removeItem('token'); sessionStorage.removeItem('user'); }
     setToken(t);
   };
 
@@ -37,6 +37,8 @@ export default function App() {
   const needsAuth = !!checkout || !!order || path === '/orders';
 
   let view;
+  let home = false;
+
   if (event) {
     view = <EventView key={event[1]} id={event[1]} token={token} setToken={saveToken} />;
   } else if (needsAuth && !token) {
@@ -54,7 +56,13 @@ export default function App() {
                     next={path === '/account' ? '/account' : next} setToken={saveToken} />;
   } else {
     view = <EventList />;
+    home = true;
   }
+
+  useEffect(() => {
+    document.body.classList.add('home-bg');
+    return () => document.body.classList.remove('home-bg');
+  }, []);
 
   return (
       <>

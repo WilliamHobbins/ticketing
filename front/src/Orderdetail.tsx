@@ -10,8 +10,8 @@ interface Props {
 }
 
 // Las entradas llegan por un evento asíncrono (ticket.issued): se consulta hasta que aparezcan.
-const TICKET_POLL_MS = 3000;
-const TICKET_POLL_MAX = 20;
+const TICKET_POLL_MS = 1500;
+const TICKET_POLL_MAX = 40;
 const PENDING_POLL_MS = 5000;
 
 export default function OrderDetail({ id, token, setToken }: Props) {
@@ -73,9 +73,15 @@ export default function OrderDetail({ id, token, setToken }: Props) {
     const when = ev ? eventWhen(ev.startsAt) : '';
     const hasTickets = order.status === 'PAID' || order.status === 'REFUNDED';
     // Se dibuja una entrada por asiento desde el primer momento; el código aparece cuando llega de tickets.
+    // En un pedido REFUNDED, si todavía no llegaron las entradas, se muestran como anuladas.
     const cards: Ticket[] = tickets.length
         ? tickets
-        : order.seatIds.map((s) => ({ ticketId: s, seatId: s, code: '', status: 'VALID' }));
+        : order.seatIds.map((s): Ticket => ({
+            ticketId: s,
+            seatId: s,
+            code: '',
+            status: order.status === 'REFUNDED' ? 'VOIDED' : 'VALID',
+        }));
 
     return (
         <div className="ord">
@@ -107,6 +113,9 @@ export default function OrderDetail({ id, token, setToken }: Props) {
                     </p>
                     <p><a className="btn" href={'#/event/' + order.eventId}>Elegir asientos</a></p>
                 </>
+            )}
+            {order.status === 'REFUNDED' && (
+                <p>Alguien tomó el asiento antes de concretar la venta. Te devolvimos el pago y las entradas quedaron anuladas.</p>
             )}
 
             {hasTickets && (
