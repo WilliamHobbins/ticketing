@@ -46,6 +46,7 @@ export default function AuthView({ mode, next, setToken }: Props) {
         try {
             if (isRegister) await register(String(f.get('name')).trim(), email, password);
             const r = await login(email, password); // tras registrarse, entra directo
+            sessionStorage.setItem('user', JSON.stringify(r.user));
             setToken(r.accessToken);
             location.hash = '#' + next;
         } catch (err) {
@@ -60,6 +61,15 @@ export default function AuthView({ mode, next, setToken }: Props) {
 
     const q = next !== '/' ? '?next=' + encodeURIComponent(next) : '';
     const field = (k: keyof Errors) => errors[k] && <p className="field-err" role="alert">{errors[k]}</p>;
+
+    const legend = (
+        <div className="legend">
+            <span><i />Libre</span>
+            <span><i className="lg-on" />Tu selección</span>
+            <span className="na"><i className="lg-off" />No disponible</span>
+        </div>
+    );
+
 
     return (
         <div className="auth">

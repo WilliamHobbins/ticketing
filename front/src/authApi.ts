@@ -40,7 +40,7 @@ export const login = (email: string, password: string) =>
     call<LoginResult>('/api/v1/users/login', { method: 'POST', body: { email, password } });
 
 export const me = (token: string) =>
-    call<{ id: string; email: string }>('/api/v1/users/me', { token });
+    call<{ name: string; email: string }>('/api/v1/users/me', { token });
 
 /** Fecha de expiración (ms) leída del payload del JWT, o null si no se puede decodificar. */
 export function tokenExpiry(token: string): number | null {

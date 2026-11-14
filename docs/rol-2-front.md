@@ -30,27 +30,25 @@ Capturar con el stack levantado (`docker compose up --build -d`) en [http://loca
 | `07-pedido.png` | Detalle de un pedido pagado con sus entradas y códigos | Tras pagar |
 | `08-mis-pedidos.png` | Listado de pedidos con distintos estados | `#/orders` |
 | `09-cuenta.png` | Pantalla "Mi cuenta" | `#/account` |
-| `10-graphiql.png` | Sandbox de GraphQL ejecutando una consulta (solo desarrollo) | [http://localhost:8080/api/v1/catalog/graphql](http://localhost:8080/api/v1/catalog/graphql) |
 
-![Listado de eventos](img/01-listado.png)
+![Listado de eventos](img/f-01-listado.png)
 
-![Plano de asientos](img/02-mapa-asientos.png)
+![Plano de asientos](img/f-02-mapa-asientos.png)
 
-![Selección de asientos](img/03-seleccion.png)
+![Selección de asientos](img/f-03-seleccion.png)
 
-![Reserva activa](img/04-reserva.png)
+![Reserva activa](img/f-04-reserva.png)
 
-![Ingreso y registro](img/05-login.png)
+![Ingreso y registro](img/f-05-login.png)
 
-![Confirmar y pagar](img/06-checkout.png)
+![Confirmar y pagar](img/f-06-checkout.png)
 
-![Detalle del pedido con entradas](img/07-pedido.png)
+![Detalle del pedido con entradas](img/f-07-pedido.png)
 
-![Mis pedidos](img/08-mis-pedidos.png)
+![Mis pedidos](img/f-08-mis-pedidos.png)
 
-![Mi cuenta](img/09-cuenta.png)
+![Mi cuenta](img/f-09-cuenta.png)
 
-![Sandbox GraphQL](img/10-graphiql.png)
 
 ### API del catálogo (`/api/v1/catalog`)
 
@@ -63,8 +61,6 @@ Capturar con el stack levantado (`docker compose up --build -d`) en [http://loca
 | Salud | `GET /health` | — |
 
 Los datos de ejemplo se cargan solos en el primer arranque: 3 sedes (Teatro Solís, Sala Zitarrosa, Teatro Larrañaga), 7 sectores, 6 eventos y unos 900 asientos, con cerca del 15 % ya ocupados para que el plano se vea realista.
-
-**GraphQL (opcional).** Endpoint de solo lectura en `/api/v1/catalog/graphql` con `events`, `event`, `venues` y `venue`, que permite pedir un evento con su sede, sectores y asientos en una sola consulta. El sandbox (GraphiQL) solo está activo si `NODE_ENV` no es `production`; en producción, el sandbox responde 406 y la introspección queda deshabilitada.
 
 ### Servicios que consume el front
 
@@ -88,7 +84,6 @@ Los servicios responden los errores con el formato `{ error: { code, message, de
 | PostgreSQL (`pg`) | Fuente de verdad: sedes, sectores, asientos y eventos | Integridad referencial y transacciones; esquema propio `catalog` para no mezclarse con usuarios. |
 | Redis (`ioredis`) | Caché de lecturas | Patrón cache-aside con TTL de 60 s (10 s para el mapa de asientos). |
 | Zod | Validación de entrada | Rechaza datos inválidos con 400 antes de tocar la base. |
-| GraphQL Yoga | Consulta GraphQL opcional | Sandbox integrado y plugin para deshabilitar introspección. |
 | Pino + pino-http | Logs JSON con `X-Correlation-Id` | Trazabilidad entre gateway y servicios. |
 | prom-client | Métricas para Prometheus | Latencia HTTP y contador de aciertos/fallos de caché. |
 | Docker | Empaquetado en dos etapas | Imagen final sin dependencias de desarrollo, ejecutada como usuario sin privilegios. |
@@ -197,6 +192,6 @@ El registro valida correo, nombre, contraseña de 10 a 72 bytes y que ambas cont
 
 El catálogo y el front cubren el recorrido completo de compra: desde el listado hasta las entradas emitidas. El catálogo ofrece una base realista, con datos persistentes en PostgreSQL, lecturas rápidas gracias a Redis y degradación elegante si la caché falla, además de métricas y logs integrados con la observabilidad del proyecto. El front, en React, integra cuatro servicios (catálogo, usuarios, inventario y pedidos) y traduce sus errores a mensajes claros para la persona.
 
-El problema crítico del sistema, no vender dos veces el mismo asiento, se refleja en la interfaz mediante reservas con tiempo límite, un plano que se mantiene al día y un pago idempotente que no cobra doble ante reintentos. Se verificó el funcionamiento del catálogo con PostgreSQL y Redis reales: CRUD, validaciones, caché con invalidación, GraphQL y el interruptor de sandbox por entorno.
+El problema crítico del sistema, no vender dos veces el mismo asiento, se refleja en la interfaz mediante reservas con tiempo límite, un plano que se mantiene al día y un pago idempotente que no cobra doble ante reintentos. Se verificó el funcionamiento del catálogo con PostgreSQL y Redis reales: CRUD, validaciones y caché con invalidación.
 
 Lo que queda pendiente es reemplazar el pago simulado por una pasarela real, documentar los contratos en OpenAPI y sumar pruebas automatizadas.

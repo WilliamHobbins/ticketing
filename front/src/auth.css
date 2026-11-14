@@ -25,7 +25,30 @@
 .auth .pw .link { position: absolute; right: 6px; top: 50%; transform: translateY(-50%);
     background: none; border: 0; color: var(--cobalt, #1f4fd8); font: inherit; font-size: .85em; cursor: pointer; }
 .auth .field-err { margin: 0; color: #b3261e; font-size: .85em; font-weight: 400; }
-.auth .account { display: grid; grid-template-columns: auto 1fr; gap: 10px 16px; margin: 0 0 20px; }
-.auth .account dt { color: var(--muted, #667); }
-.auth .account dd { margin: 0; word-break: break-all; }
-.auth .mono { font-family: ui-monospace, Consolas, monospace; font-size: .85em; }
+.auth .account-card {
+    margin: 20px 0; padding: 22px;
+    background: #fff;
+    border: 1px solid var(--line, #cdd1da);
+    border-radius: 16px;
+    box-shadow: 0 8px 28px rgba(0, 0, 0, .18);
+    color: var(--ink, #15181f);
+}
+.auth .account-head {
+    display: flex; align-items: center; gap: 14px;
+    padding-bottom: 16px; margin-bottom: 16px;
+    border-bottom: 1px solid var(--line, #cdd1da);
+}
+.auth .account-avatar {
+    flex: none; width: 52px; height: 52px; border-radius: 50%;
+    display: grid; place-items: center;
+    font-size: 1.4rem; font-weight: 600; color: #fff;
+    background: linear-gradient(135deg, var(--cobalt, #1f4fd8), color-mix(in srgb, var(--cobalt, #1f4fd8) 55%, #ec4899));
+}
+.auth .account-name { font-size: 1.1rem; font-weight: 600; line-height: 1.2; }
+.auth .account-email { font-size: .9rem; color: #3a4154; word-break: break-all; }
+.auth .account-label { font-size: .8rem; text-transform: uppercase; letter-spacing: .05em; color: #3a4154; font-weight: 600; }
+.auth .account-row {
+    display: flex; justify-content: space-between; align-items: baseline;
+    gap: 4px 16px; flex-wrap: wrap;
+}
+.auth .account-value { font-size: .95rem; font-weight: 500; }
