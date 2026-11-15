@@ -39,7 +39,7 @@ export async function connectBroker(maxAttempts = 10, delayMs = 3000): Promise<v
       const ch = await conn.createConfirmChannel();
       await ch.assertExchange(config.EVENTS_EXCHANGE, 'topic', { durable: true });
       await ch.assertExchange(DLX, 'topic', { durable: true });
-      await ch.prefetch(10);
+      await ch.prefetch(1);
       connection = conn;
       channel = ch;
       connected = true;
