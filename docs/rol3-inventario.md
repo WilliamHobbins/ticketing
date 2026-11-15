@@ -30,14 +30,14 @@ vencidos y filtrar esos casos en cada consulta. Además, Redis mantiene los dato
 base permanente, donde solo queda el estado definitivo (disponible o vendido).
 
 ## Decisiones de infraestructura
-- Postgres propio del servicio, accedido por la variable DATABASE_URL.
-- Redis accedido por la variable REDIS_URL.
+- Postgres propio del servicio (base lógica `ticketing_inventory`), accedido por la variable DATABASE_URL.
+- Redis accedido por la variable REDIS_URL. En Docker usa la base 1 de Redis, para no compartir claves con el caché del catálogo.
 - RabbitMQ accedido por la variable BROKER_URL.
 - No se usan servicios externos (como Supabase), para que todo corra con
   docker compose up y haya paridad entre desarrollo y producción.
 
 ## Stack del servicio
-- Lenguaje: Node.js 20+ con TypeScript (definido por el equipo).
+- Lenguaje: Node.js con TypeScript (definido por el equipo).
 - Framework HTTP: Express, elegido por ser simple y maduro.
 - Librerías: `pg` (Postgres), `ioredis` (Redis), `amqplib` (RabbitMQ), `prom-client` (métricas) y `dotenv` (variables de entorno).
 - Desarrollo: `tsx` para correr TypeScript directamente sin compilar a mano.
@@ -47,18 +47,22 @@ El servicio usa la infraestructura del docker compose base del equipo: Postgres,
 El esquema se aplica con `npm run migrate` (a partir de `inventory-service/db/schema.sql`).
 
 ## Configuración (variables de entorno)
-| Variable | Descripción | Valor de ejemplo |
+| Variable | Descripción | Valor de ejemplo (desarrollo local) |
 |---|---|---|
 | PORT | Puerto en el que escucha el servicio | 8083 |
-| DATABASE_URL | Conexión a Postgres | postgres://inventory:inventory@localhost:5432/inventory |
-| REDIS_URL | Conexión a Redis | redis://localhost:6379 |
-| BROKER_URL | Conexión a RabbitMQ | [completar con el valor de tu .env.example] |
+| DATABASE_URL | Conexión a Postgres | postgres://ticketing:change_this_postgres_password@localhost:5432/ticketing_inventory |
+| REDIS_URL | Conexión a Redis (en Docker termina en `/1`) | redis://localhost:6379 |
+| BROKER_URL | Conexión a RabbitMQ | amqp://ticketing:change_this_rabbit_password@localhost:5672 |
 | HOLD_TTL_SECONDS | Duración de un hold en segundos | 600 |
 | HOLD_EXTEND_SECONDS | Segundos que suma `extend` (ver "Decisiones tomadas") | 120 |
 | SWEEP_INTERVAL_SECONDS | Cada cuántos segundos corre el barrido de holds vencidos | 5 |
+| LOG_LEVEL | Nivel de log | info |
 
-El archivo `.env.example` se versiona; el `.env` real no (está en `.gitignore`).
+El archivo `.env.example` se versiona; el `.env` real no (está en `.gitignore`). Las contraseñas del ejemplo son
+de desarrollo y se cambian en el `.env` de cada uno.
 `DATABASE_URL` y `BROKER_URL` son obligatorias: si faltan, el servicio no arranca.
+Dentro de Docker, el `docker-compose.yml` define estas variables con los nombres de host de la red interna
+(`postgres`, `redis`, `rabbitmq`).
 
 ## Cómo correr y probar el servicio
 ```
@@ -71,19 +75,22 @@ curl.exe http://localhost:8083/health
 Respuesta esperada: `{"status":"ok","postgres":"ok","redis":"ok"}`. Si alguna dependencia no responde en
 2 segundos, el estado de esa dependencia es `down`, el estado general es `degraded` y el código HTTP es 503.
 
-Para correr los tests (con el servicio levantado y los tres contenedores arriba): `npm test`.
+Para correr los tests (con los tres contenedores de infraestructura arriba y **una sola instancia** del servicio): `npm test`.
+Si el contenedor `inventory-service` está corriendo, hay que pararlo antes (`docker compose stop inventory-service`) y
+usar `npm run dev` (ver "Problemas encontrados al testear").
 
 ## Docker
 El servicio se empaqueta con un Dockerfile de dos etapas (compilación y ejecución),
-a partir de `node:22-alpine`. Se construye y corre con:
+a partir de `node:22-alpine`. En el stack completo se construye y corre con:
 
 ```
-docker build -t inventory-service .
-docker run --rm -p 8083:8083 --env-file .env inventory-service
+docker compose up --build -d inventory-service
 ```
 
-El `.env` no se incluye en la imagen (`.dockerignore`); la configuración se inyecta al
-iniciar el contenedor.
+El `.env` no se incluye en la imagen (`.dockerignore`); la configuración la inyecta el compose al iniciar el contenedor.
+El contenedor arranca con `sh -c "node dist/migrate.js && exec node dist/index.js"`: primero aplica el esquema
+(es idempotente, usa `CREATE TABLE IF NOT EXISTS`) y después reemplaza el proceso `sh` por el de node (`exec`),
+para que las señales de Docker, como SIGTERM, lleguen al servicio.
 
 ## Holds con Redis
 
@@ -115,14 +122,15 @@ La creación del hold corre como un script Lua dentro de Redis. Redis ejecuta ca
 - El body se valida antes de tocar Redis (máximo 10 asientos por hold, sin repetidos).
 
 ### Decisiones tomadas
-- **`extend`**: nuevo vencimiento = `max(vencimiento actual, ahora + HOLD_EXTEND_SECONDS)` con `HOLD_EXTEND_SECONDS = 120` por defecto [confirmar el valor con el grupo]. Se usa el máximo para que extender nunca acorte un hold y para que llamarlo varias veces no acumule tiempo. La decisión original decía "desde ahora" literal; el máximo es un ajuste a confirmar con el grupo.
-- **`DELETE`** exige que `X-User-Id` coincida con el dueño del hold (si no, 403). Si orders necesita liberar holds ajenos, hay que revisarlo.
-- **Asientos en conflicto del 409**: van en `error.details.seatIds`. El contrato no dice dónde; hay que confirmarlo con el grupo.
+- **`extend`**: nuevo vencimiento = `max(vencimiento actual, ahora + HOLD_EXTEND_SECONDS)` con `HOLD_EXTEND_SECONDS = 120` por defecto. Se usa el máximo para que extender nunca acorte un hold y para que llamarlo varias veces no acumule tiempo. La decisión original decía "desde ahora" literal; el máximo es un ajuste nuestro que orders ya usa (extiende el hold justo antes de cobrar) sin necesitar cambios.
+- **`DELETE`** exige que `X-User-Id` coincida con el dueño del hold (si no, 403). Orders no libera holds: el pago fallido llega por `payment.failed`, que inventory procesa sin pasar por este endpoint.
+- **Asientos en conflicto del 409**: van en `error.details.seatIds`. El contrato no dice dónde; el front ya lee ese campo.
 - **Base de datos**: `ticketing_inventory` (el contrato decía `inventory_db`).
 - **`JWT_SECRET`** no va en inventory: el gateway valida el JWT y reenvía `X-User-Id`.
 
-### Problema encontrado (pendiente de cerrar)
-Probando con `HOLD_TTL_SECONDS=30`, `expiresAt` salió a +90 s pero el TTL real en Redis fue 120 s. Hipótesis: el reloj del contenedor de Redis (VM de Docker Desktop) va unos 30 s atrás del host, y `extend` usa `PEXPIREAT` con un timestamp absoluto del host. Solución propuesta: usar `PEXPIRE` con TTL relativo. Estado: [pendiente de verificar / resuelto: completar].
+### Observación sobre el reloj en `extend`
+Probando con `HOLD_TTL_SECONDS=30`, `expiresAt` salió a +90 s pero el TTL real en Redis fue 120 s. La hipótesis es que el reloj del contenedor de Redis (VM de Docker Desktop) iba unos 30 s atrás del host, y `extend` usa `PEXPIREAT` con un timestamp absoluto calculado con la hora del host.
+**Estado:** no es un problema activo. Al revisarlo de nuevo los relojes coinciden y el comportamiento es el esperado. No se modificó el script Lua para no tocar a último momento una pieza que cubren los tests de concurrencia. Queda como mejora: usar `PEXPIRE` con la diferencia (`nuevoVencimiento - ahora`), que no depende de que los relojes estén sincronizados.
 
 ### Cómo probarlo a mano (PowerShell)
 ```powershell
@@ -162,6 +170,7 @@ Inventory deja de depender solo de Redis: ahora tiene su propia copia de los asi
   - Error de infraestructura (por ejemplo Postgres caído): se devuelve a la cola y se reintenta cada 2 s. No se pierde ningún evento.
 - **Reconexión**: si RabbitMQ no está o se cae, el servicio HTTP sigue funcionando y el consumidor reintenta conectarse cada 5 s.
 - **Id de asiento**: `{sector}{fila}-{número}`, por ejemplo sector `A`, fila 3, número 12 da `A3-12`.
+- **Campos que se validan del sobre**: `messageId`, `type` y `data`. Inventory no exige `version`, `occurredAt` ni `correlationId`, por eso acepta el sobre simplificado que publica catalog (con `timestamp` en vez de `occurredAt`).
 
 ### `GET /api/v1/events/{eventId}/seats`
 Responde `200 [{ seatId, sector, row, number, price, status }]` ordenado por sector, fila y número.
@@ -187,18 +196,19 @@ Responde `200 [{ seatId, sector, row, number, price, status }]` ordenado por sec
 | Hold de `A1-2` (1500) y `B2-5` (900) | `total` = 2400 |
 | Hold sobre `Z9-9` y listado de `nope` | `404 SEAT_NOT_FOUND` y `404 EVENT_NOT_FOUND` |
 | Asiento marcado `SOLD` a mano | `409 SEAT_UNAVAILABLE` y `SOLD` en el listado |
-| [Opcional: Postgres apagado durante el consumo] | [completar si lo hiciste, o borrar esta fila] |
+
+No se probó a mano el reintento con Postgres apagado en medio del consumo: está resuelto por diseño (`nack` con reencolado a los 2 s), sin test.
 
 ### A tener en cuenta
 - Códigos de error nuevos: `SEAT_NOT_FOUND` y `EVENT_NOT_FOUND` (404). El contrato solo menciona `SEAT_UNAVAILABLE`.
 - `GET /events/{eventId}/seats` no requiere `X-User-Id`.
-- Rol 2 (catalog): el formato del id de asiento es `{sector}{fila}-{número}` y los nombres de sector solo pueden tener letras, números, `_` y `-` (sin espacios), porque se usan en claves de Redis y en validaciones. Hay que acordar los nombres de sector.
-- El front tiene que usar los `seatId` que devuelve el listado al crear un hold.
+- Con el catálogo integrado, el formato del id de asiento quedó resuelto: catalog publica los nombres de sector sin tildes, espacios ni símbolos (por ejemplo "Paraíso" pasa a "Paraiso"), porque inventory los usa en claves de Redis y los valida con `^[\w-]{1,64}$`.
+- El front usa los `seatId` que devuelve el listado al crear un hold.
 
 ## Expiración de holds y evento `hold.expired`
 
 ### Qué hace
-Cuando un hold vence, sus asientos se liberan solos (la clave `seat:*` tiene TTL en Redis). Pero Redis no avisa de forma confiable cuando una clave expira, así que inventory tiene un **barrido propio** que detecta los holds vencidos y publica `hold.expired` en RabbitMQ (exchange `ticketing.events`, routing key `hold.expired`). Quien lo consume es orders, que marca el pedido como `EXPIRED`.
+Cuando un hold vence, sus asientos se liberan solos (la clave `seat:*` tiene TTL en Redis). Pero Redis no avisa de forma confiable cuando una clave expira, así que inventory tiene un **barrido propio** que detecta los holds vencidos y publica `hold.expired` en RabbitMQ (exchange `ticketing.events`, routing key `hold.expired`). Quien lo consume es orders, que marca el pedido como `EXPIRED` (solo si sigue en `PENDING_PAYMENT`: un pedido ya pagado no se pisa).
 
 ### Cómo funciona el barrido (`src/sweeper.ts`)
 1. Cada `SWEEP_INTERVAL_SECONDS` (por defecto 5) un script Lua atómico toma hasta 100 holds con score <= ahora y les corre el score 30 s hacia adelante (**lease**).
@@ -223,7 +233,7 @@ Cuando un hold vence, sus asientos se liberan solos (la clave `seat:*` tiene TTL
 1. **Camino feliz:** un hold con TTL de 30 s vence, el servicio loguea `hold.expired publicado`, el mensaje llega a la cola de prueba con el sobre completo y `holds:expiry` queda en 0.
 2. **Liberación manual:** un hold borrado con `DELETE` sale del índice (`ZCARD` baja) y no llega ningún mensaje.
 3. **RabbitMQ caído:** con el broker apagado cuando vence el hold, el publicador falla y el hold sigue en el índice; al volver el broker, el evento llega una sola vez.
-4. **Con métricas (paso 7):** con `HOLD_TTL_SECONDS=5`, un hold vence y `holds_expired_total` pasa a 1, sin errores de publicación.
+4. **Con métricas:** con `HOLD_TTL_SECONDS=5`, un hold vence y `holds_expired_total` pasa a 1, sin errores de publicación.
 
 ### Limitaciones
 - El barrido compara con la hora del host y los asientos se liberan por la hora de Redis. Con relojes sincronizados no hay diferencia; se comprobó que hoy coinciden.
@@ -251,6 +261,8 @@ Se publica cuando se cobró un pedido pero los asientos ya no se pueden vender. 
 | `SEAT_NOT_FOUND` | Algún asiento no existe en el evento. |
 
 El `messageId` se deriva del `orderId` (`deterministicUuid("sale.rejected:" + orderId)`): si el evento se publica dos veces, el consumidor lo reconoce como el mismo mensaje. Conserva el `correlationId` del `payment.succeeded` que lo originó.
+
+Orders lo consume en su cola `orders.events` y, como compensación, pasa el pedido `PAID` a `REFUNDED` (devolución simulada) y las entradas a `VOIDED`. El notifier también lo consume (`notifier.events`) para anular las entradas y simular el email de devolución.
 
 ### Colas
 Una cola por tipo de evento, cada una con su dead-letter queue (patrón ya usado en `event.created`):
@@ -308,16 +320,18 @@ Datos: evento `evt-1`. Todas con resultado esperado.
 | 5 | Asiento tomado por otro hold | Rechazo con `SEAT_TAKEN`; la reserva del otro usuario queda intacta en Redis. |
 | 6 | `payment.failed` | Hold liberado, asiento otra vez `AVAILABLE`, índice de vencimientos vacío, sin evento publicado. |
 
+Además, el flujo completo se probó integrado con orders y notifier reales (ver `docs/decisiones-rol-4.md`, sección 7): pedido `PAID` con asientos en `SOLD`, y la compensación con `sale.rejected`.
+
 ### Limitaciones conocidas
-- **Carrera con el barrido.** Si `payment.succeeded` llega cuando el barrido ya publicó `hold.expired`, orders recibe ambos eventos. A acordar con el Rol 4 que el pago confirmado prevalece.
-- **El notifier es independiente.** Emite la entrada al recibir `payment.succeeded`, sin esperar el resultado de inventory. Falta acordar con el Rol 4 qué hace orders (reembolso o aviso) al recibir `sale.rejected`.
-- **`sale.rejected` necesita una cola.** Si orders no crea una cola enlazada a `ticketing.events` con la routing key `sale.rejected`, RabbitMQ descarta los mensajes en silencio.
+- **Carrera con el barrido.** Si `payment.succeeded` llega cuando el barrido ya publicó `hold.expired`, orders recibe ambos eventos. Orders solo pasa a `EXPIRED` los pedidos que siguen en `PENDING_PAYMENT`, así que un pedido ya pagado no se pisa; y antes de cobrar orders extiende el hold para reducir esta ventana.
+- **El notifier es independiente.** Emite la entrada al recibir `payment.succeeded`, sin esperar el resultado de inventory. Si inventory rechaza la venta, `sale.rejected` anula esas entradas y orders pasa el pedido a `REFUNDED`.
+- **`sale.rejected` necesita una cola.** Si nadie crea una cola enlazada a `ticketing.events` con la routing key `sale.rejected`, RabbitMQ descarta los mensajes en silencio. Hoy la tienen orders (`orders.events`) y el notifier (`notifier.events`).
 - **La publicación ocurre con la transacción abierta.** Solo en el camino de rechazo; si RabbitMQ tarda, las filas de esos asientos quedan bloqueadas ese tiempo.
 - Las ventas confirmadas y rechazadas se exponen como `sales_confirmed_total` y `sales_rejected_total{reason}` en `/metrics` (ver "Observabilidad").
 
 ### Cambios al contrato
-- Evento nuevo `sale.rejected` (datos y motivos arriba): sumarlo al documento de contratos.
-- Orders tiene que incluir `holdId` en `payment.failed`.
+- Evento nuevo `sale.rejected` (datos y motivos arriba). Orders ya lo documenta en `contracts/orders-service/events.md`.
+- Orders incluye `holdId` en `payment.failed`.
 
 ## Pruebas de concurrencia e idempotencia
 
@@ -328,7 +342,7 @@ El documento de decisiones pide, como definición de "terminado" del Rol 3, test
 - **Runner:** `node:test` (el nativo de Node) ejecutado con `tsx`. No agrega dependencias. El script es `npm test`.
 - **Integración real, sin mocks:** los tests corren contra el Postgres, Redis y RabbitMQ del `docker compose` y contra el servicio levantado (`npm run dev`). Es lo que demuestra la concurrencia de verdad: los mocks no reproducen las carreras entre Redis y Postgres.
 - **Caja negra:** los tests no importan funciones internas de `payments.ts`. Publican mensajes reales a `ticketing.events` y observan el resultado en Postgres, Redis y en una cola propia enlazada a `sale.rejected`. Así se prueba el consumidor completo, incluido el `ack`, y no hizo falta modificar el código del servicio para testearlo.
-- **Evento propio:** `evt-test` (asientos `T1-1` a `T1-5`), que se recrea antes de cada test y se borra al terminar, para no tocar `evt-1`. Los `messageId` de prueba empiezan con `test-` y se limpian de `processed_messages`.
+- **Evento propio:** `evt-test` (asientos `T1-1` a `T1-5`), que se recrea antes de cada test y se borra al terminar, para no tocar `evt-1`. Los `messageId` de prueba empiezan con `test-` y se limpian de `processed_messages`. Todos los archivos de test, incluido el de métricas, usan este mismo evento.
 - **Configuración de TypeScript:** `tsconfig.json` compila solo `src` (build de producción) y `tsconfig.test.json` incluye también `test` para chequear tipos (`npx tsc -p tsconfig.test.json`).
 
 ### Tests
@@ -347,7 +361,7 @@ El documento de decisiones pide, como definición de "terminado" del Rol 3, test
 El vencimiento de los tests 5b y 5c se simula borrando la clave del asiento en Redis, que es lo que haría el TTL; esperar el TTL real de 10 minutos no aportaría nada más.
 
 ### Resultado
-Los 10 tests pasan (`tests 10`, `pass 10`, `fail 0`) y el proceso termina solo. Los 7 primeros son de concurrencia, idempotencia y casos borde; los 3 últimos, de `metrics.test.ts`.
+Los 10 tests pasan (`tests 10`, `pass 10`, `fail 0`) con una sola instancia del servicio corriendo, y el proceso termina solo. Los 7 primeros son de concurrencia, idempotencia y casos borde; los 3 últimos, de `metrics.test.ts`.
 
 ```
 ▶ Concurrencia en holds
@@ -383,12 +397,13 @@ Al revisar el código para los tests apareció una ventana chica en `createHold`
 ### Problemas encontrados al testear
 - **Conexión duplicada a RabbitMQ en los tests:** al publicar dos mensajes a la vez, cada uno abría su propia conexión y una quedaba sin cerrar, con lo que el proceso de test no terminaba. Se identificó listando los sockets abiertos (la conexión sobrante apuntaba al puerto 5672) y se corrigió guardando la promesa de conexión para que las llamadas simultáneas la compartan.
 - **Primeras corridas de la prueba manual:** dieron `201` aunque el código ya tenía la re-verificación. No se pudo confirmar la causa; lo más probable es que el servicio no hubiera recargado el último guardado. Funcionó al volver a guardar el archivo con logs de depuración.
+- **Fallos intermitentes con dos instancias del servicio (15/11):** con el contenedor `inventory-service` corriendo a la vez que `npm run dev`, algunos tests fallaban y otros pasaban según la corrida. La causa: las dos instancias consumen las mismas colas de RabbitMQ, así que cada mensaje lo toma una u otra al azar, y además usan bases de Redis distintas (el contenedor la 1 y `npm run dev` la 0). Si el contenedor procesaba un `payment.failed`, liberaba el hold en su Redis y el test, que mira el otro, veía el asiento todavía reservado. Se resolvió corriendo los tests con una sola instancia (`docker compose stop inventory-service` y `npm run dev`).
+- **Test de métricas con datos inexistentes (15/11):** `metrics.test.ts` reservaba el asiento `A1-3` de `evt-1`, un dato de ejemplo que no existe en una base recién creada, y fallaba con `404`. Se cambió para que prepare y borre `evt-test`, como los demás.
 
 ### Limitaciones conocidas
-- Los tests necesitan el servicio y los tres contenedores levantados; si no, fallan con un mensaje que lo indica.
-- `metrics.test.ts` usa el evento `evt-1` con el asiento `A1-3` libre (datos de ejemplo).
+- Los tests necesitan los tres contenedores de infraestructura y una única instancia del servicio levantada con `npm run dev`; si el servicio no responde, fallan con un mensaje que lo indica. No corren contra el contenedor de inventory porque el helper de tests se conecta a Redis y Postgres por `localhost`.
 - En el test 4 el motivo del rechazo varía entre corridas (`SEAT_TAKEN` o `SEAT_ALREADY_SOLD`), porque depende de quién llegue primero. El test acepta ambos.
-- No hay tests automáticos de la expiración real por TTL ni del barrido que publica `hold.expired`; eso se probó a mano (pasos 4 y 7).
+- No hay tests automáticos de la expiración real por TTL ni del barrido que publica `hold.expired`; eso se probó a mano.
 
 ## Observabilidad: métricas y logs
 
@@ -441,29 +456,25 @@ Cada evento es una línea JSON en la salida estándar, con los campos `timestamp
 | 6 | Hold con `HOLD_TTL_SECONDS=5`, esperando el vencimiento | `holds_expired_total` = 1, `hold_expired_publish_errors_total` = 0, y el log `hold.expired publicado` (que sale solo después de la confirmación de RabbitMQ) |
 | 7 | Test automático `test/metrics.test.ts` | Pasa. Verifica el formato, que crear un hold sube el contador en 1 y que la etiqueta usa el patrón y no el id real |
 
+### Integración con Prometheus y Grafana
+- Prometheus ya recolecta las métricas de inventory: `infra/prometheus/prometheus.yml` tiene el job `inventory-service` apuntando a `inventory-service:8083/metrics`.
+- El dashboard de Grafana es uno solo y está a cargo del Rol 1. Hoy cubre users-service y Nginx y todavía no tiene paneles de inventory. Las consultas útiles para agregarlos son `rate(http_requests_total[1m])`, `holds_created_total`, `holds_expired_total`, `sales_confirmed_total` y `sales_rejected_total`.
+
 ### Limitaciones conocidas
 - Los contadores viven en memoria y vuelven a cero cuando el servicio se reinicia. Prometheus lo tolera, porque calcula con `rate()`.
-- Para ver las métricas en Prometheus o Grafana hace falta que `infra/prometheus.yml` tenga a inventory-service como target (configuración del Rol 1). El dashboard es uno solo y está a cargo del Rol 1; las consultas útiles son `rate(http_requests_total[1m])`, `holds_created_total` y `sales_rejected_total`.
 - Los logs no tienen rotación ni archivo: salen por la salida estándar, y lo que haga con ellos es responsabilidad del entorno (12-Factor).
 
 ## 12-Factor aplicado en este servicio
-- Codebase: un repositorio (monorepo) y un artefacto desplegable por servicio.
-- Dependencias: declaradas en package.json.
-- Configuración: solo por variables de entorno, con .env.example.
-- Servicios de apoyo: Postgres, Redis y RabbitMQ tratados como recursos por URL.
-- Build, release, run: una imagen Docker inmutable por servicio; la configuración se inyecta al correr.
-- Procesos: servicio sin estado propio; el estado vive en Postgres y Redis.
-- Port binding: el servicio escucha en la variable PORT.
-- Concurrencia: se escala levantando más réplicas; el barrido de holds es seguro con varias réplicas (script atómico con lease).
-- Descartabilidad: arranque rápido y apagado limpio ante SIGTERM (cierra el servidor y sale).
-- Paridad dev/prod: el mismo docker compose para todos.
-- Logs: a la salida estándar, una línea JSON por evento y con `correlationId`; no hay archivos ni rotación dentro del servicio.
-- Procesos administrativos: la migración del esquema es un script aparte (`npm run migrate`), no parte del arranque del servicio.
+- **Codebase:** un repositorio (monorepo) y un artefacto desplegable por servicio.
+- **Dependencias:** declaradas en `package.json`.
+- **Configuración:** solo por variables de entorno, con `.env.example`.
+- **Servicios de apoyo:** Postgres, Redis y RabbitMQ tratados como recursos por URL.
+- **Build, release, run:** una imagen Docker inmutable por servicio; la configuración se inyecta al correr.
+- **Procesos:** servicio sin estado propio; el estado vive en Postgres y Redis.
+- **Port binding:** el servicio escucha en la variable `PORT`.
+- **Concurrencia:** se escala levantando más réplicas; el barrido de holds es seguro con varias réplicas (script atómico con lease).
+- **Descartabilidad:** arranque rápido y apagado ordenado. Ante SIGTERM o SIGINT el servicio deja de aceptar conexiones, cierra Redis y Postgres y sale; si en 10 s no terminó, sale igual. Las conexiones a RabbitMQ se cierran al terminar el proceso, y lo que quede a medias se reentrega (entrega at-least-once, consumidores idempotentes). En el Dockerfile el `exec` hace que la señal llegue a node y no al `sh` que lanza la migración.
+- **Paridad dev/prod:** el mismo docker compose para todos.
+- **Logs:** a la salida estándar, una línea JSON por evento y con `correlationId`; no hay archivos ni rotación dentro del servicio.
+- **Procesos administrativos:** la migración del esquema es un script aparte (`src/migrate.ts`), idempotente. En Docker corre automáticamente antes de levantar el servicio; en desarrollo se corre a mano con `npm run migrate`.
 
-## Pendientes y puntos a acordar con el grupo
-- Confirmar el valor de `HOLD_EXTEND_SECONDS` y la regla de `extend` (`max(actual, ahora + extensión)`).
-- Cerrar el problema del reloj de Redis en `extend` (ver "Problema encontrado").
-- Acordar con el Rol 2 los nombres de sector y el formato del id de asiento.
-- Acordar con el Rol 4: que el pago confirmado prevalece sobre `hold.expired`, qué hace orders al recibir `sale.rejected` (y que cree su cola), y que `payment.failed` incluya `holdId`.
-- Sumar `sale.rejected` y los códigos de error nuevos al documento de contratos.
-- Conectar inventory-service a Prometheus (`infra/prometheus.yml`) con el Rol 1 y pasarle las métricas para el dashboard de Grafana.

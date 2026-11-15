@@ -78,16 +78,40 @@ app.use((err: any, _req: Request, res: Response, _next: NextFunction) => {
     return res.status(413).json({ error: { code: "PAYLOAD_TOO_LARGE", message: "El body es demasiado grande" } });
   }
   logger.error("Unhandled error", {
-  correlationId: res.locals.correlationId as string,
-  error: errorMessage(err),
-  stack: err?.stack,
-});
+    correlationId: res.locals.correlationId as string,
+    error: errorMessage(err),
+    stack: err?.stack,
+  });
   res.status(500).json({ error: { code: "INTERNAL_ERROR", message: "Error interno" } });
 });
 
-app.listen(config.port, () => {
+const server = app.listen(config.port, () => {
   logger.info("inventory-service listening", { port: config.port });
   void startConsumer();
   void startSweeper();
   startPaymentConsumers();
 });
+
+// Apagado ordenado (12-Factor, factor IX): ante SIGTERM/SIGINT dejamos de aceptar
+// conexiones, cerramos Redis y Postgres y salimos. Si en 10 s no terminó, salimos igual.
+let shuttingDown = false;
+
+const shutdown = (signal: string) => {
+  if (shuttingDown) return; // si llega la señal dos veces, no repetimos el apagado
+  shuttingDown = true;
+  logger.info("Apagando inventory-service", { signal });
+
+  const force = setTimeout(() => process.exit(1), 10_000);
+  force.unref();
+
+  server.close(async () => {
+    await redis.quit().catch(() => {});
+    await pool.end().catch(() => {});
+    process.exit(0);
+  });
+  // Cierra las conexiones HTTP en reposo para que server.close no se quede esperando.
+  (server as any).closeIdleConnections?.();
+};
+
+process.on("SIGTERM", () => shutdown("SIGTERM"));
+process.on("SIGINT", () => shutdown("SIGINT"));

@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
-import { describe, it } from "node:test";
+import { after, before, describe, it } from "node:test";
+import { TEST_EVENT, TEST_SEATS, closeConnections, dropTestEvent, resetTestEvent } from "./helpers";
 
 const BASE = process.env.INVENTORY_URL ?? "http://localhost:8083";
 
@@ -17,6 +18,16 @@ function counter(text: string, name: string): number {
 }
 
 describe("Métricas", () => {
+  // Deja el evento de prueba (evt-test) limpio, igual que los otros tests.
+  before(async () => {
+    await resetTestEvent();
+  });
+
+  after(async () => {
+    await dropTestEvent();
+    await closeConnections();
+  });
+
   it("GET /metrics responde en formato Prometheus", async () => {
     const res = await fetch(`${BASE}/metrics`);
     assert.equal(res.status, 200);
@@ -34,7 +45,7 @@ describe("Métricas", () => {
     const res = await fetch(`${BASE}/api/v1/holds`, {
       method: "POST",
       headers: { "Content-Type": "application/json", "X-User-Id": "user-metrics-test" },
-      body: JSON.stringify({ eventId: "evt-1", seatIds: ["A1-3"] }),
+      body: JSON.stringify({ eventId: TEST_EVENT, seatIds: [TEST_SEATS[0]] }),
     });
     assert.equal(res.status, 201);
     const { holdId } = (await res.json()) as { holdId: string };

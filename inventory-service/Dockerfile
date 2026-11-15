@@ -17,4 +17,4 @@ RUN npm ci --omit=dev
 COPY --from=build /app/dist ./dist
 COPY --from=build /app/db ./db
 EXPOSE 8083
-CMD ["sh", "-c", "node dist/migrate.js && node dist/index.js"]
+CMD ["sh", "-c", "node dist/migrate.js && exec node dist/index.js"]
