@@ -23,18 +23,3 @@ CREATE TABLE IF NOT EXISTS processed_messages (
   type          TEXT NOT NULL,
   processed_at  TIMESTAMPTZ NOT NULL DEFAULT now()
 );
-
--- Outbox: eventos que deben publicarse en RabbitMQ.
-CREATE TABLE IF NOT EXISTS outbox (
-  id              BIGSERIAL PRIMARY KEY,
-  message_id      UUID NOT NULL UNIQUE,
-  type            TEXT NOT NULL,
-  data            JSONB NOT NULL,
-  correlation_id  TEXT NOT NULL,
-  created_at      TIMESTAMPTZ NOT NULL DEFAULT now(),
-  published_at    TIMESTAMPTZ
-);
-
-CREATE INDEX IF NOT EXISTS idx_inventory_outbox_pending
-  ON outbox (id)
-  WHERE published_at IS NULL;

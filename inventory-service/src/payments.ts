@@ -2,14 +2,13 @@ import { ConsumeMessage } from "amqplib";
 import { pool } from "./db";
 import { claimSeatsForSale, loadHold, releaseHoldKeys } from "./holds";
 import { InvalidMessage, parseEnvelope, startQueueConsumer } from "./messaging";
-import { deterministicUuid } from "./publisher";
+import { deterministicUuid, publishEvent } from "./publisher";
 import {
   holdsReleasedByPaymentTotal,
   salesConfirmedTotal,
   salesRejectedTotal,
 } from "./metrics";
 import { logger } from "./logger";
-import { enqueueEvent } from "./outbox";
 
 const ID = /^[\w-]{1,64}$/;
 const isId = (v: unknown): v is string => typeof v === "string" && ID.test(v);
@@ -46,8 +45,8 @@ function parseSucceeded(msg: ConsumeMessage): PaymentSucceeded {
 type SaleResult = { kind: "sold" } | { kind: "rejected"; reason: string } | { kind: "duplicate" };
 
 // Una transacción: registra el messageId y vende (o rechaza) los asientos.
-// Si hay que rechazar, guarda sale.rejected en el Outbox dentro de la
-// misma transacción. El worker lo publicará después del COMMIT.
+// Si hay que rechazar, publica sale.rejected ANTES del COMMIT: si algo falla,
+// el mensaje se reintenta y el messageId determinístico evita duplicados.
 async function sellInPostgres(m: PaymentSucceeded, takenByOthers: string[]): Promise<SaleResult> {
   const { orderId, holdId, eventId, seatIds } = m.data;
   const client = await pool.connect();
@@ -89,8 +88,7 @@ async function sellInPostgres(m: PaymentSucceeded, takenByOthers: string[]): Pro
     }
 
     if (reason) {
-      await enqueueEvent(
-        client,
+      await publishEvent(
         "sale.rejected",
         { orderId, holdId, eventId, seatIds, reason },
         m.correlationId,
