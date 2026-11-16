@@ -1,65 +1,277 @@
+
 {
   "annotations": { "list": [] },
   "editable": true,
-  "graphTooltip": 0,
+  "graphTooltip": 1,
   "id": null,
-  "links": [],
+  "uid": "ticketing-overview",
   "panels": [
     {
-      "type": "timeseries",
-      "title": "Requests HTTP por segundo (users-service)",
-      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 0 },
+      "id": 1,
+      "type": "stat",
+      "title": "Estado de los servicios",
+      "description": "1 = UP, 0 = DOWN",
+      "gridPos": { "h": 5, "w": 24, "x": 0, "y": 0 },
       "datasource": { "type": "prometheus", "uid": "prometheus" },
       "targets": [
-        { "expr": "sum(rate(users_service_http_requests_total[5m]))", "legendFormat": "requests/s", "refId": "A" }
+        {
+          "expr": "up{job=~\"users-service|nginx|catalog-service|inventory-service|orders-service|notifier-worker\"}",
+          "legendFormat": "{{job}}",
+          "refId": "A"
+        }
+      ],
+      "options": {
+        "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false },
+        "orientation": "horizontal",
+        "textMode": "value_and_name",
+        "colorMode": "background",
+        "graphMode": "none",
+        "justifyMode": "auto"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "min": 0,
+          "max": 1,
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "red", "value": null },
+              { "color": "green", "value": 1 }
+            ]
+          }
+        },
+        "overrides": []
+      }
+    },
+    {
+      "id": 2,
+      "type": "timeseries",
+      "title": "Solicitudes HTTP por segundo - Users",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 5 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [
+        {
+          "expr": "sum(rate(users_service_http_requests_total[5m]))",
+          "legendFormat": "Requests/s",
+          "refId": "A"
+        }
       ]
     },
     {
+      "id": 3,
       "type": "timeseries",
-      "title": "Latencia p95 (users-service)",
-      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 0 },
+      "title": "Latencia p95 - Users",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 5 },
       "datasource": { "type": "prometheus", "uid": "prometheus" },
       "targets": [
-        { "expr": "histogram_quantile(0.95, sum by (le) (rate(users_service_http_request_duration_seconds_bucket[5m])))", "legendFormat": "p95", "refId": "A" }
+        {
+          "expr": "histogram_quantile(0.95, sum by (le) (rate(users_service_http_request_duration_seconds_bucket[5m])))",
+          "legendFormat": "p95",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": { "defaults": { "unit": "s" }, "overrides": [] }
+    },
+    {
+      "id": 4,
+      "type": "timeseries",
+      "title": "Registros y logins - Users",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 13 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [
+        {
+          "expr": "increase(users_service_registrations_total[1h])",
+          "legendFormat": "Registros",
+          "refId": "A"
+        },
+        {
+          "expr": "increase(users_service_login_success_total[1h])",
+          "legendFormat": "Logins exitosos",
+          "refId": "B"
+        },
+        {
+          "expr": "increase(users_service_login_failure_total[1h])",
+          "legendFormat": "Logins fallidos",
+          "refId": "C"
+        }
       ]
     },
     {
+      "id": 5,
       "type": "timeseries",
-      "title": "Registros de usuarios",
-      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 8 },
+      "title": "Latencia p95 - Catalog",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 13 },
       "datasource": { "type": "prometheus", "uid": "prometheus" },
       "targets": [
-        { "expr": "increase(users_service_registrations_total[1h])", "legendFormat": "registros/h", "refId": "A" }
+        {
+          "expr": "histogram_quantile(0.95, sum by (le) (rate(catalog_http_request_duration_seconds_bucket[5m])))",
+          "legendFormat": "p95",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": { "defaults": { "unit": "s" }, "overrides": [] }
+    },
+    {
+      "id": 6,
+      "type": "timeseries",
+      "title": "Resultados de caché - Catalog",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 21 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [
+        {
+          "expr": "sum by (result) (increase(catalog_cache_total[1h]))",
+          "legendFormat": "{{result}}",
+          "refId": "A"
+        }
       ]
     },
     {
+      "id": 7,
       "type": "timeseries",
-      "title": "Logins exitosos y fallidos",
-      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 8 },
+      "title": "Actividad de reservas - Inventory",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 21 },
       "datasource": { "type": "prometheus", "uid": "prometheus" },
       "targets": [
-        { "expr": "increase(users_service_login_success_total[1h])", "legendFormat": "exitosos", "refId": "A" },
-        { "expr": "increase(users_service_login_failure_total[1h])", "legendFormat": "fallidos", "refId": "B" }
+        {
+          "expr": "increase(holds_created_total[1h])",
+          "legendFormat": "Reservas creadas",
+          "refId": "A"
+        },
+        {
+          "expr": "increase(holds_expired_total[1h])",
+          "legendFormat": "Reservas vencidas",
+          "refId": "B"
+        },
+        {
+          "expr": "increase(holds_released_by_payment_total[1h])",
+          "legendFormat": "Liberadas por pago",
+          "refId": "C"
+        }
       ]
     },
     {
+      "id": 8,
       "type": "timeseries",
-      "title": "Conexiones activas de Nginx",
-      "gridPos": { "h": 8, "w": 24, "x": 0, "y": 16 },
+      "title": "Ventas - Inventory",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 29 },
       "datasource": { "type": "prometheus", "uid": "prometheus" },
       "targets": [
-        { "expr": "nginx_connections_active", "legendFormat": "activas", "refId": "A" }
+        {
+          "expr": "increase(sales_confirmed_total[1h])",
+          "legendFormat": "Confirmadas",
+          "refId": "A"
+        },
+        {
+          "expr": "sum by (reason) (increase(sales_rejected_total[1h]))",
+          "legendFormat": "Rechazadas - {{reason}}",
+          "refId": "B"
+        }
+      ]
+    },
+    {
+      "id": 9,
+      "type": "timeseries",
+      "title": "Latencia p95 - Inventory",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 29 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [
+        {
+          "expr": "histogram_quantile(0.95, sum by (le) (rate(http_request_duration_seconds_bucket{job=\"inventory-service\"}[5m])))",
+          "legendFormat": "p95",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": { "defaults": { "unit": "s" }, "overrides": [] }
+    },
+    {
+      "id": 10,
+      "type": "timeseries",
+      "title": "Pedidos y pagos - Orders",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 37 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [
+        {
+          "expr": "increase(orders_created_total{job=\"orders-service\"}[1h])",
+          "legendFormat": "Pedidos creados",
+          "refId": "A"
+        },
+        {
+          "expr": "sum by (result) (increase(payments_total{job=\"orders-service\"}[1h]))",
+          "legendFormat": "Pagos - {{result}}",
+          "refId": "B"
+        }
+      ]
+    },
+    {
+      "id": 11,
+      "type": "timeseries",
+      "title": "Mensajes procesados - Orders",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 37 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [
+        {
+          "expr": "sum by (type, result) (increase(messages_processed_total{job=\"orders-service\"}[1h]))",
+          "legendFormat": "{{type}} - {{result}}",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "id": 12,
+      "type": "timeseries",
+      "title": "Eventos procesados - Notifier",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 45 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [
+        {
+          "expr": "sum by (type, result) (increase(notifier_messages_processed_total[1h]))",
+          "legendFormat": "{{type}} - {{result}}",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "id": 13,
+      "type": "timeseries",
+      "title": "Entradas y emails simulados - Notifier",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 45 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [
+        {
+          "expr": "increase(notifier_tickets_issued_total[1h])",
+          "legendFormat": "Entradas emitidas",
+          "refId": "A"
+        },
+        {
+          "expr": "sum by (kind) (increase(notifier_emails_sent_total[1h]))",
+          "legendFormat": "Emails - {{kind}}",
+          "refId": "B"
+        }
+      ]
+    },
+    {
+      "id": 14,
+      "type": "timeseries",
+      "title": "Conexiones activas - Nginx",
+      "gridPos": { "h": 8, "w": 24, "x": 0, "y": 53 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [
+        {
+          "expr": "nginx_connections_active",
+          "legendFormat": "Conexiones activas",
+          "refId": "A"
+        }
       ]
     }
   ],
   "refresh": "15s",
   "schemaVersion": 39,
   "style": "dark",
-  "tags": ["ticketing", "rol-1"],
+  "tags": ["ticketing", "rol-1", "observability"],
   "templating": { "list": [] },
   "time": { "from": "now-1h", "to": "now" },
   "timepicker": {},
   "timezone": "browser",
   "title": "Sistema de Tickets - Overview",
-  "version": 1
+  "version": 2
 }

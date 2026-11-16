@@ -10,6 +10,7 @@ import { startSweeper } from "./sweeper";
 import { startPaymentConsumers } from "./payments";
 import { httpMetrics, register } from "./metrics";
 import { errorMessage, logger, requestLogger } from "./logger";
+import { startOutboxWorker, stopOutboxWorker } from "./outbox";
 
 const app = express();
 
@@ -90,6 +91,7 @@ const server = app.listen(config.port, () => {
   void startConsumer();
   void startSweeper();
   startPaymentConsumers();
+  startOutboxWorker();
 });
 
 // Apagado ordenado (12-Factor, factor IX): ante SIGTERM/SIGINT dejamos de aceptar
@@ -105,6 +107,7 @@ const shutdown = (signal: string) => {
   force.unref();
 
   server.close(async () => {
+    await stopOutboxWorker();
     await redis.quit().catch(() => {});
     await pool.end().catch(() => {});
     process.exit(0);
