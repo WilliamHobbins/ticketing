@@ -1,97 +1,112 @@
-# Sistema de Tickets — Rol 1
-Node.js + TypeScript, Nginx, PostgreSQL, Redis, RabbitMQ, Prometheus y Grafana.
+# Ticketing
+
+Plataforma de venta de entradas basada en microservicios, con un gateway Nginx al frente.
+
+## Arquitectura
+
+| Servicio | Puerto interno | Descripción |
+|---|---|---|
+| gateway (Nginx) | 8080 (publicado) | Entrada única: rate limiting, validación JWT, sirve el front estático |
+| users-service | 3001 | Registro, login y validación de tokens |
+| catalog-service | 3002 | Catálogo de eventos (REST + GraphQL) |
+| inventory-service | 8083 | Disponibilidad de asientos y reservas temporales |
+| orders-service | 3004 | Pedidos |
+| notifier-worker | 3005 | Notificaciones asíncronas (RabbitMQ) |
+| postgres / redis / rabbitmq | 5432 / 6379 / 5672 | Infraestructura |
+| prometheus / grafana | 9090 / 3000 | Métricas y dashboards |
 
 ## Requisitos
-- Docker Desktop (con Docker Compose v2)
-- Node.js 20+ y npm (solo si querés ejecutar users-service fuera de Docker)
+
+- [Docker Desktop](https://www.docker.com/products/docker-desktop/) instalado y corriendo
+- [Node.js](https://nodejs.org/) 22 o superior (para el front)
 - Git
 
-## 1. Preparar configuración
+## Puesta en marcha
+
+### 1. Clonar el repositorio
+
 ```bash
-cp .env.example .env
+git clone https://github.com/WilliamHobbins/ticketing
+cd ticketing
 ```
-En Windows PowerShell:
+
+### 2. Crear el archivo de entorno
+
+Copiá el archivo de ejemplo y completá los valores (contraseñas, `JWT_SECRET`, etc.):
+
 ```powershell
+# PowerShell (Windows)
 Copy-Item .env.example .env
 ```
-Editá `.env`: cambiá `POSTGRES_PASSWORD`, `JWT_SECRET` y `RABBITMQ_PASSWORD` por valores propios antes de compartir o publicar el repositorio. No subas `.env` a Git.
 
-## 2. Levantar todo
-Desde la raíz del proyecto:
 ```bash
-docker compose up --build -d
+# Linux / macOS
+cp .env.example .env
+```
+
+> El `.env` **no se sube a git**. Nunca commitees secretos.
+
+### 3. Generar el build del front
+
+El gateway sirve el front desde `front/dist`, que no está versionado:
+
+```bash
+npm --prefix front install
+npm --prefix front run build
+```
+
+### 4. Levantar los servicios
+
+```bash
+docker compose up -d --build
+```
+
+Verificá que todo esté `healthy`:
+
+```bash
 docker compose ps
 ```
-Ver logs:
+
+### 5. Abrir la app
+
+| URL | Qué es |
+|---|---|
+| http://localhost:8080 | App servida por el gateway (build estático) |
+| http://localhost:5173 | Front en modo desarrollo (`npm --prefix front run dev`) |
+| http://localhost:3000 | Grafana |
+| http://localhost:9090 | Prometheus |
+| http://localhost:15672 | RabbitMQ Management |
+
+## Desarrollo
+
+Front con recarga en caliente:
+
 ```bash
-docker compose logs -f users-service gateway
-```
-Detener:
-```bash
-docker compose down
-```
-Borrar también los datos persistidos (¡destructivo!):
-```bash
-docker compose down -v
+npm --prefix front run dev
 ```
 
-## 3. URLs locales
-- API pública a través de Nginx: http://localhost:8080
-- Health del gateway: `GET http://localhost:8080/health`
-- Health de usuarios: `GET http://localhost:8080/api/v1/users/health`
-- Métricas de usuarios: `users-service:3001/metrics` (solo dentro de la red de Docker; Prometheus las scrapea)
-- Prometheus: http://localhost:9090
-- Grafana: http://localhost:3000
-- RabbitMQ Management: http://localhost:15672
+Vite redirige `/api` al gateway (`localhost:8080`), por lo que los servicios deben estar levantados.
 
-Grafana usa `GRAFANA_USER` / `GRAFANA_PASSWORD` del `.env`.
+## Después de hacer `git pull`
 
-## 4. Probar registro y login
-Registro:
 ```bash
-curl -i -X POST http://localhost:8080/api/v1/users/register \
-  -H "Content-Type: application/json" \
-  -d "{\"email\":\"demo@example.com\",\"password\":\"UnaClaveSegura123\",\"name\":\"Demo\"}"
-```
-Login:
-```bash
-curl -i -X POST http://localhost:8080/api/v1/users/login \
-  -H "Content-Type: application/json" \
-  -d "{\"email\":\"demo@example.com\",\"password\":\"UnaClaveSegura123\"}"
-```
-La respuesta del login incluye `accessToken`. Para una ruta protegida de prueba:
-```bash
-curl -i http://localhost:8080/api/v1/users/me \
-  -H "Authorization: Bearer PEGAR_ACCESS_TOKEN"
-```
-Sin token, `/api/v1/users/me` debe responder `401`.
-
-## 5. Arquitectura y límites de esta primera versión
-- Nginx es el punto de entrada público. Aplica rate limiting, asigna/propaga `X-Correlation-Id` y enruta a users-service.
-- Nginx `auth_request` consulta `users-service` para validar JWT en rutas protegidas y reenvía `X-User-Id`/`X-User-Email` a los servicios internos (ver `contracts/gateway-headers.md`).
-- Users-service usa PostgreSQL para persistencia, bcrypt para contraseñas, JWT para autenticación, logs JSON con Pino y métricas Prometheus.
-- Redis y RabbitMQ quedan levantados para que el resto del equipo los use; este servicio todavía no publica ni consume mensajes.
-- El endpoint `GET /metrics` de users-service y el exporter de Nginx se scrapean en Prometheus.
-- La configuración de rutas de catálogo, inventario y pedidos se agrega cuando el equipo acuerde los nombres/puertos de esos servicios. No se enrutan todavía.
-- El JWT de ejemplo usa HS256. El secreto debe ser largo, aleatorio y compartido de forma segura entre los componentes que deban validar tokens.
-- Para producción harían falta, entre otras cosas, TLS, rotación/gestión de secretos, políticas de expiración y renovación de tokens, y endurecimiento adicional.
-
-## 6. Carpetas
-- `users-service/`: registro, login, JWT, `/me`, health, métricas y logs.
-- `gateway/nginx.conf`: reverse proxy, rate limiting, correlation ID y validación con `auth_request`.
-- `infra/`: PostgreSQL init, Prometheus y dashboard/provisioning Grafana.
-- `contracts/`: espacio para OpenAPI y contratos de eventos compartidos.
-- `docs/`: borrador de observabilidad y registro de uso de IA.
-
-## 7. Verificación rápida
-```bash
-./scripts/smoke-test.sh   # con el stack levantado
+docker compose up -d --build
+docker compose restart gateway      # refresca las IPs de los upstreams
+npm --prefix front install          # solo si cambiaron dependencias
+npm --prefix front run build        # regenera el front estático
 ```
 
-## 8. Comandos útiles
+## Comandos útiles
+
 ```bash
-docker compose logs -f
-docker compose logs -f postgres
-docker compose restart gateway
-docker compose config
+docker compose logs -f <servicio>   # ver logs (ej: catalog-service)
+docker compose down                 # detener todo
+docker compose down -v              # detener y BORRAR los datos (volúmenes)
 ```
+
+## Problemas frecuentes
+
+- **502 Bad Gateway tras recrear contenedores:** `docker compose restart gateway`.
+- **`localhost:8080` muestra el front viejo o vacío:** regenerá el build (`npm --prefix front run build`) y recargá con Ctrl+F5.
+- **Puerto ocupado (5432, 6379, 8080, 3000...):** cambialo en el `.env` (`POSTGRES_PORT`, `GATEWAY_PORT`, etc.).
+- **Las bases de datos no se crearon:** `init-databases.sql` solo corre al crear el volumen de Postgres. Usá `docker compose down -v` y volvé a levantar (borra los datos).
